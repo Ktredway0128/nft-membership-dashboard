@@ -173,10 +173,9 @@ function App() {
       }
 
       const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-      // 0x7a69 = Hardhat localhost (31337) | 0xaa36a7 = Sepolia
-      // Switch back to '0xaa36a7' and 'Sepolia' when deploying to testnet
-      if (chainId !== '0x7a69') {
-        setStatus('Please switch MetaMask to the Hardhat localhost network.');
+      
+      if (chainId !== '0xaa36a7') {
+        setStatus('Please switch MetaMask to the Sepolia network.');
         setStatusStyle(STATUS_COLORS.error);
         return;
       }
@@ -187,10 +186,9 @@ function App() {
       const _signer  = metaMaskProvider.getSigner();
       const _account = await _signer.getAddress();
 
-      // Hardhat local node — switch back to Alchemy URL for Sepolia deployment
       const alchemyProvider = new ethers.providers.JsonRpcProvider(
-        'http://127.0.0.1:8545',
-        { name: 'hardhat', chainId: 31337 }
+        process.env.REACT_APP_ALCHEMY_URL,
+        { name: 'sepolia', chainId: 11155111 }
       );
 
       const _contract     = new ethers.Contract(VESTING_ADDRESS, ABI, _signer);
