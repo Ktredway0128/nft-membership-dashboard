@@ -378,10 +378,7 @@ function App() {
             // We store this keyed by vestingId so the display can use it
             const schedule = await readContract.getVestingSchedule(vestingId);
             const vestedAtRevoke = schedule.totalAmount.sub(parsed.args.returnedAmount).sub(schedule.released);
-            setRevokedAmounts(prev => ({
-              ...prev,
-              [vestingId]: vestedAtRevoke.isNegative() ? ethers.BigNumber.from(0) : vestedAtRevoke,
-            }));
+
             break;
           }
         } catch {}
