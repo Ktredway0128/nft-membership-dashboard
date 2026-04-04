@@ -81,16 +81,17 @@ function App() {
   const [isPaused,        setIsPaused]        = useState(false);
 
   // Staking data
-  const [totalSupply,          setTotalSupply]          = useState('0');
-  const [myStaked,             setMyStaked]             = useState('0');
-  const [myEarned,             setMyEarned]             = useState('0');
-  const [rewardRate,           setRewardRate]           = useState('0');
-  const [periodFinish,         setPeriodFinish]         = useState('0');
-  const [rewardPeriod,         setRewardPeriod]         = useState('0');
-  const [currentAPY,           setCurrentAPY]           = useState('0');
-  const [totalRewardForPeriod, setTotalRewardForPeriod] = useState('0');
-  const [contractBalance,      setContractBalance]      = useState('0');
-  const [totalClaimed,         setTotalClaimed]         = useState('0');
+  const [totalSupply,           setTotalSupply]           = useState('0');
+  const [myStaked,              setMyStaked]              = useState('0');
+  const [myEarned,              setMyEarned]              = useState('0');
+  const [rewardRate,            setRewardRate]            = useState('0');
+  const [periodFinish,          setPeriodFinish]          = useState('0');
+  const [rewardPeriod,          setRewardPeriod]          = useState('0');
+  const [currentAPY,            setCurrentAPY]            = useState('0');
+  const [totalRewardForPeriod,  setTotalRewardForPeriod]  = useState('0');
+  const [contractBalance,       setContractBalance]       = useState('0');
+  const [totalClaimed,          setTotalClaimed]          = useState('0');
+  const [currentBlockTimestamp, setCurrentBlockTimestamp] = useState('0');
 
   // User inputs
   const [stakeAmount,     setStakeAmount]     = useState('');
@@ -243,6 +244,9 @@ function App() {
       setStatus('Error loading data: ' + err.message);
       setStatusStyle(STATUS_COLORS.error);
     }
+
+    const block = await _contract.provider.getBlock('latest');
+    setCurrentBlockTimestamp(block.timestamp);
   };
 
   const handleRefresh = async () => {
@@ -481,6 +485,27 @@ function App() {
     }
   };
 
+  const handleRecoverLeftoverRewards = async () => {
+    try {
+      setStatus('Recovering leftover rewards...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await contract.recoverLeftoverRewards();
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Leftover rewards recovered successfully!');
+      setStatusStyle(STATUS_COLORS.success);
+      await loadDashboardData(readContract, account);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
   const formatTokens = (amount) =>
     Number(amount).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
@@ -493,7 +518,7 @@ function App() {
 
   const periodActive = () => {
     if (!periodFinish || periodFinish === '0') return false;
-    return Date.now() / 1000 < Number(periodFinish);
+    return currentBlockTimestamp < Number(periodFinish);
   };
 
   return (
@@ -626,7 +651,11 @@ function App() {
                       )}
                     </p>
                     <p className="text-xs mt-1" style={{ color: '#64748b' }}>
-                      Contract Balance: <strong style={{ color: '#0ea5e9' }}>{formatTokens(contractBalance)} STK</strong>
+                      {periodActive() ? (
+                        <>Contract Balance: <strong style={{ color: '#0ea5e9' }}>{formatTokens(contractBalance)} STK</strong></>
+                      ) : (
+                        <span style={{ color: '#dc2626' }}>Reward period has ended — no rewards are being distributed.</span>
+                      )}
                     </p>
                   </div>
                   <div className="text-right">
@@ -681,17 +710,6 @@ function App() {
                         className="flex-1 border rounded-xl px-4 py-3 text-sm outline-none"
                         style={{ borderColor: '#bae6fd', color: '#334155' }}
                       />
-                      <button
-                        onClick={() => setUnstakeAmount(myStaked)}
-                        disabled={isLoading}
-                        className="px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
-                        style={{
-                          backgroundColor: '#0ea5e9',
-                          opacity: isLoading ? 0.6 : 1,
-                          cursor: isLoading ? 'not-allowed' : 'pointer',
-                        }}>
-                        Max
-                      </button>
                     </div>
                   )}
 
@@ -760,12 +778,12 @@ function App() {
                   />
                   <button
                     onClick={handleStake}
-                    disabled={isLoading || isPaused}
+                    disabled={isLoading || isPaused || !periodActive()}
                     className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
                     style={{
                       backgroundColor: '#0ea5e9',
-                      opacity: (isLoading || isPaused) ? 0.6 : 1,
-                      cursor: (isLoading || isPaused) ? 'not-allowed' : 'pointer',
+                      opacity: (isLoading || isPaused || !periodActive()) ? 0.6 : 1,
+                      cursor: (isLoading || isPaused || !periodActive()) ? 'not-allowed' : 'pointer',
                     }}>
                     Stake
                   </button>
@@ -773,6 +791,11 @@ function App() {
                 {isPaused && (
                   <p className="text-xs mt-2" style={{ color: '#f97316' }}>
                     ⚠️ Staking is currently paused.
+                  </p>
+                )}
+                {!periodActive() && !isPaused && (
+                  <p className="text-xs mt-2" style={{ color: '#f97316' }}>
+                      ⚠️ No active reward period. Staking is currently disabled.
                   </p>
                 )}
               </div>
@@ -869,7 +892,7 @@ function App() {
                   <p className="text-xs mb-3" style={{ color: '#64748b' }}>
                     Cannot recover staking or reward tokens. Emergency use only.
                   </p>
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 mb-6">
                     <input
                       type="text"
                       placeholder="Token contract address (0x...)"
@@ -898,7 +921,25 @@ function App() {
                       Recover
                     </button>
                   </div>
-                </div>
+
+                    {/* RECOVER LEFTOVER REWARDS */}
+                    <hr style={{ borderColor: 'rgba(15,76,92,0.1)', margin: '24px 0' }} />
+                    <p className="text-sm font-semibold mb-2" style={{ color: '#0ea5e9' }}>Recover Leftover Rewards</p>
+                    <p className="text-xs mb-3" style={{ color: '#64748b' }}>
+                      Only callable after the reward period ends. Recovers any undistributed reward tokens back to the admin wallet.
+                    </p>
+                    <button
+                      onClick={handleRecoverLeftoverRewards}
+                      disabled={isLoading || periodActive()}
+                      className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
+                      style={{
+                        backgroundColor: '#0ea5e9',
+                        opacity: (isLoading || periodActive()) ? 0.6 : 1,
+                        cursor: (isLoading || periodActive()) ? 'not-allowed' : 'pointer',
+                      }}>
+                      Recover Leftover Rewards
+                    </button>
+                  </div>
               )}
 
               {/* EMPTY STATE */}
