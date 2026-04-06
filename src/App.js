@@ -200,12 +200,15 @@ function App() {
       const _totalSupply  = await _contract.totalSupply();
       const _myStaked     = await _contract.balanceOf(_account);
       const _myEarned     = await _contract.earned(_account);
+      const _rewardRate   = await _contract.rewardRate();
       const _periodFinish = await _contract.periodFinish();
       const _rewardPeriod = await _contract.rewardPeriod();
       const _totalReward  = await _contract.totalRewardForPeriod();
+      const _totalClaimed = await _contract.totalClaimed();
 
-      const totalSupplyFormatted    = ethers.utils.formatUnits(_totalSupply, 18);
-      const totalRewardFormatted    = ethers.utils.formatUnits(_totalReward, 18);
+      const totalSupplyFormatted  = ethers.utils.formatUnits(_totalSupply, 18);
+      const totalRewardFormatted  = ethers.utils.formatUnits(_totalReward, 18);
+      const totalClaimedFormatted = ethers.utils.formatUnits(_totalClaimed, 18);
 
       setTotalSupply(totalSupplyFormatted);
       setMyStaked(ethers.utils.formatUnits(_myStaked, 18));
