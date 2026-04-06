@@ -140,7 +140,7 @@ function App() {
       }
 
       const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (chainId !== '0xaa36a7' && chainId !== '0x7a69') {
+      if (chainId !== '0xaa36a7') {
         setStatus('Please switch MetaMask to Sepolia or Localhost 8545.');
         setStatusStyle(STATUS_COLORS.error);
         return;
@@ -152,13 +152,10 @@ function App() {
       const _signer  = metaMaskProvider.getSigner();
       const _account = await _signer.getAddress();
 
-      const isLocalhost = chainId === '0x7a69';
-      const alchemyProvider = isLocalhost
-        ? new ethers.providers.JsonRpcProvider('http://127.0.0.1:8545')
-        : new ethers.providers.JsonRpcProvider(
-            process.env.REACT_APP_ALCHEMY_URL,
-            { name: 'sepolia', chainId: 11155111 }
-          );
+      const alchemyProvider = new ethers.providers.JsonRpcProvider(
+        process.env.REACT_APP_ALCHEMY_URL,
+        { name: 'sepolia', chainId: 11155111 }
+      );
 
       const _contract     = new ethers.Contract(STAKING_ADDRESS, ABI, _signer);
       const _readContract = new ethers.Contract(STAKING_ADDRESS, ABI, alchemyProvider);
