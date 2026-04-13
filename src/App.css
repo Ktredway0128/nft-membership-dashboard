@@ -9,12 +9,44 @@ body {
     width: 100%;
     height: 100%;
     z-index: 0;
-    background: linear-gradient(135deg, #fb923c 0%, #f97316 30%, #fdba74 60%, #ea6c0a 100%);
-    background-size: 400% 400%;
-    animation: shimmer 5s ease-in-out infinite;
+    background: linear-gradient(
+        135deg,
+        #e8e8e8 0%,
+        #dde4ea 15%,
+        #d0d8e4 25%,
+        #b8c8d8 35%,
+        #9ab4cc 43%,
+        #7a9ec0 50%,
+        #5a88b4 57%,
+        #3a6aa0 65%,
+        #2a5590 73%,
+        #1a4a8a 80%,
+        #122070 90%,
+        #0f2d5e 100%
+    );
+    background-size: 100% 100%;
 }
 
 .shimmer-bg::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        135deg,
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255,0) 40%,
+        rgba(255,255,255,0.3) 50%,
+        rgba(255,255,255,0) 60%,
+        rgba(255,255,255,0) 100%
+    );
+    background-size: 300% 300%;
+    animation: shimmer-sweep 8s ease-in-out infinite;
+}
+
+.shimmer-bg::before {
     content: '';
     position: absolute;
     top: 0;
@@ -27,8 +59,8 @@ body {
       radial-gradient(circle, rgba(255,255,255,0.5)  2px, transparent 2px);
     background-size: 40px 40px, 25px 25px, 60px 60px;
     background-position: 0 0, 15px 15px, 30px 30px;
-    animation: sparkle 2.5s linear infinite;
-    opacity: 0.7;
+    animation: sparkle 3s ease-in-out infinite;
+    opacity: 0.6;
 }
 
 .content {
@@ -36,16 +68,18 @@ body {
     z-index: 1;
 }
 
-@keyframes shimmer {
-    0%   { background-position: 0% 50%; }
-    50%  { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
+@keyframes shimmer-sweep {
+    0%   { background-position: 0% 0%; }
+    50%  { background-position: 100% 100%; }
+    100% { background-position: 0% 0%; }
 }
 
 @keyframes sparkle {
-    0%   { opacity: 0.2; transform: scale(1); }
-    50%  { opacity: 0.5; transform: scale(1.02); }
-    100% { opacity: 0.2; transform: scale(1); }
+    0%   { opacity: 0.15; background-position: 0 0, 15px 15px, 30px 30px; }
+    25%  { opacity: 0.5; }
+    50%  { opacity: 0.7; background-position: 20px 20px, 35px 35px, 50px 50px; }
+    75%  { opacity: 0.4; }
+    100% { opacity: 0.15; background-position: 0 0, 15px 15px, 30px 30px; }
 }
 
 .card-hover {
@@ -54,7 +88,7 @@ body {
 
 .card-hover:hover {
     transform: translateY(-4px);
-    box-shadow: 0 12px 30px rgba(15, 76, 92, 0.15);
+    box-shadow: 0 12px 30px rgba(15, 45, 94, 0.2);
 }
 
 .btn-hover {
@@ -63,5 +97,5 @@ body {
 
 .btn-hover:hover {
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
 }
