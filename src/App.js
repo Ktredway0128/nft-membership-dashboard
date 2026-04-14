@@ -5,12 +5,12 @@ import { MerkleTree } from 'merkletreejs';
 import keccak256 from 'keccak256';
 import './App.css';
 import NftMembershipABI from './contracts/NftMembership.json';
-import localDeployment from './contracts/local.json';
+import sepoliaDeployment from './contracts/sepolia.json';
 import whitelist from './whitelist.json';
 
 window.Buffer = Buffer;
 
-const NFT_ADDRESS = localDeployment.NftMembership;
+const NFT_ADDRESS = sepoliaDeployment.NftMembership;
 const NFT_ABI = NftMembershipABI.abi;
 
 // Dark gold for buttons and accents
