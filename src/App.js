@@ -285,7 +285,6 @@ function ActionForm({ action, index, onUpdate, onRemove, showRemove, tokenAddres
 
 function App() {
   const [governanceContract, setGovernanceContract] = useState(null);
-  const [timelockContract,   setTimelockContract]   = useState(null);
   const [tokenContract,      setTokenContract]      = useState(null);
   const [readGovernance,     setReadGovernance]     = useState(null);
   const [readToken,          setReadToken]          = useState(null);
@@ -353,13 +352,11 @@ function App() {
           );
 
       const _governanceContract = new ethers.Contract(GOVERNANCE_ADDRESS, GOVERNANCE_ABI, _signer);
-      const _timelockContract   = new ethers.Contract(TIMELOCK_ADDRESS, TIMELOCK_ABI, _signer);
       const _tokenContract      = new ethers.Contract(TOKEN_ADDRESS, TOKEN_ABI, _signer);
       const _readGovernance     = new ethers.Contract(GOVERNANCE_ADDRESS, GOVERNANCE_ABI, alchemyProvider);
       const _readToken          = new ethers.Contract(TOKEN_ADDRESS, TOKEN_ABI, alchemyProvider);
 
       setGovernanceContract(_governanceContract);
-      setTimelockContract(_timelockContract);
       setTokenContract(_tokenContract);
       setReadGovernance(_readGovernance);
       setReadToken(_readToken);
@@ -381,7 +378,6 @@ function App() {
       if (accounts.length === 0) {
         setAccount(null);
         setGovernanceContract(null);
-        setTimelockContract(null);
         setTokenContract(null);
         setReadGovernance(null);
         setReadToken(null);
