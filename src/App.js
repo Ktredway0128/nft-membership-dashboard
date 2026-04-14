@@ -15,7 +15,6 @@ const NFT_ABI = NftMembershipABI.abi;
 
 // Dark gold for buttons and accents
 const GOLD = '#9a6f00';
-const GOLD_DARK = '#7a5500';
 
 const STATUS_COLORS = {
   admin:   { backgroundColor: '#8b6508',               color: '#fff' },
