@@ -1,6 +1,6 @@
 # NFT MEMBERSHIP DASHBOARD
 
-[![Verified on Etherscan](https://img.shields.io/badge/Etherscan-Verified-brightgreen)](https://sepolia.etherscan.io/address/TO_BE_UPDATED#code)
+[![Verified on Etherscan](https://img.shields.io/badge/Etherscan-Verified-brightgreen)](https://sepolia.etherscan.io/address/0xF12215b2156f0E1dB8039d78FBad734b8f2158ac#code)
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Netlify-blue)](https://nft-membership-dashboard.netlify.app/)
 
@@ -328,7 +328,7 @@ This separation ensures reads are fast and reliable while writes are always sign
 |----------|---------|-----------|
 | NftMembership | TO_BE_UPDATED | View on Etherscan |
 
-Deployed: TO_BE_UPDATED
+Deployed: 4/14/2026
 
 
 ## EXAMPLE CONFIGURATION
