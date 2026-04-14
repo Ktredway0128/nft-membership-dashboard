@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import './App.css';
 import TokenGovernanceABI from './contracts/TokenGovernance.json';
-import TimelockABI from './contracts/TimelockController.json';
 import SampleTokenABI from './contracts/SampleToken.json';
 import sepoliaDeployment from './contracts/sepolia.json';
 
@@ -10,7 +9,6 @@ const GOVERNANCE_ADDRESS = sepoliaDeployment.TokenGovernance.address;
 const TIMELOCK_ADDRESS = sepoliaDeployment.TimelockController.address;
 const TOKEN_ADDRESS = sepoliaDeployment.SampleToken.address;
 const GOVERNANCE_ABI = TokenGovernanceABI.abi;
-const TIMELOCK_ABI = TimelockABI.abi;
 const TOKEN_ABI = SampleTokenABI.abi;
 
 const STATUS_COLORS = {
