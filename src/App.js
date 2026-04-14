@@ -1,57 +1,65 @@
+import { Buffer } from 'buffer';
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import { MerkleTree } from 'merkletreejs';
+import keccak256 from 'keccak256';
 import './App.css';
-import TokenGovernanceABI from './contracts/TokenGovernance.json';
-import SampleTokenABI from './contracts/SampleToken.json';
-import sepoliaDeployment from './contracts/sepolia.json';
+import NftMembershipABI from './contracts/NftMembership.json';
+import localDeployment from './contracts/local.json';
+import whitelist from './whitelist.json';
 
-const GOVERNANCE_ADDRESS = sepoliaDeployment.TokenGovernance.address;
-const TIMELOCK_ADDRESS = sepoliaDeployment.TimelockController.address;
-const TOKEN_ADDRESS = sepoliaDeployment.SampleToken.address;
-const GOVERNANCE_ABI = TokenGovernanceABI.abi;
-const TOKEN_ABI = SampleTokenABI.abi;
+window.Buffer = Buffer;
+
+const NFT_ADDRESS = localDeployment.NftMembership;
+const NFT_ABI = NftMembershipABI.abi;
+
+// Dark gold for buttons and accents
+const GOLD = '#9a6f00';
+const GOLD_DARK = '#7a5500';
 
 const STATUS_COLORS = {
-  propose: { backgroundColor: '#5c2d0e', color: '#fff' },
-  vote:    { backgroundColor: '#5c2d0e', color: '#fff' },
-  queue:   { backgroundColor: '#1a4a8a', color: '#fff' },
-  execute: { backgroundColor: '#0f2d5e', color: '#fff' },
-  admin:   { backgroundColor: '#5c2d0e', color: '#fff' },
-  success: { backgroundColor: '#22c55e', color: '#fff' },
-  error:   { backgroundColor: '#dc2626', color: '#fff' },
+  admin:   { backgroundColor: '#8b6508',               color: '#fff' },
+  mint:    { backgroundColor: '#8b6508',               color: '#fff' },
+  pause:   { backgroundColor: '#dc2626',               color: '#fff' },
+  unpause: { backgroundColor: '#16a34a',               color: '#fff' },
+  success: { backgroundColor: '#22c55e',               color: '#fff' },
+  error:   { backgroundColor: '#dc2626',               color: '#fff' },
   default: { backgroundColor: 'rgba(255,255,255,0.5)', color: '#0f2d5e' },
 };
 
-const STATES = ['Pending', 'Active', 'Canceled', 'Defeated', 'Succeeded', 'Queued', 'Expired', 'Executed'];
-
-const STATE_COLORS = {
-  Pending:   '#f97316',
-  Active:    '#22c55e',
-  Canceled:  '#94a3b8',
-  Defeated:  '#dc2626',
-  Succeeded: '#1a4a8a',
-  Queued:    '#8b5cf6',
-  Expired:   '#94a3b8',
-  Executed:  '#0f4c5c',
+const PHASE_LABELS = ['Paused', 'Whitelist', 'Public'];
+const PHASE_COLORS = {
+  Paused:    '#94a3b8',
+  Whitelist: '#b8860b',
+  Public:    '#22c55e',
 };
 
-const ACTION_TYPES = [
-  { value: 'transfer',        label: 'Transfer Tokens' },
-  { value: 'mint',            label: 'Mint Tokens' },
-  { value: 'updateSetting',   label: 'Update a Setting' },
-  { value: 'custom',          label: 'Custom Action (Advanced)' },
-];
+function getMerkleProof(address) {
+  if (!address) return [];
+  const checksummed = ethers.utils.getAddress(address);
+  const leaves = whitelist.map(addr => keccak256(ethers.utils.getAddress(addr)));
+  const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+  return tree.getHexProof(keccak256(checksummed));
+}
+
+function getMerkleRoot() {
+  const leaves = whitelist.map(addr => keccak256(ethers.utils.getAddress(addr)));
+  const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+  return tree.getHexRoot();
+}
+
 
 const parseError = (err) => {
-
-  if (err.message.includes('user rejected'))             return 'Transaction rejected in MetaMask.';
-  if (err.message.includes('insufficient funds'))        return 'Insufficient funds for this transaction.';
-  if (err.message.includes('proposer votes below'))      return 'Insufficient tokens to create a proposal.';
-  if (err.message.includes('vote not currently active')) return 'Voting is not currently active on this proposal.';
-  if (err.message.includes('vote already cast'))         return 'You have already voted on this proposal.';
-  if (err.message.includes('proposal not successful'))   return 'Proposal has not succeeded yet.';
-  if (err.message.includes('operation is not ready'))    return 'Timelock delay has not passed yet.';
-  if (err.message.includes('invalid proposal length'))   return 'Invalid proposal configuration.';
+  if (err.message.includes('user rejected'))              return 'Transaction rejected in MetaMask.';
+  if (err.message.includes('insufficient funds'))         return 'Insufficient funds for this transaction.';
+  if (err.message.includes('Whitelist phase not active')) return 'Whitelist phase is not currently active.';
+  if (err.message.includes('Public phase not active'))    return 'Public phase is not currently active.';
+  if (err.message.includes('Already claimed'))            return 'You have already used your whitelist mint.';
+  if (err.message.includes('Invalid Merkle proof'))       return 'Your address is not on the whitelist.';
+  if (err.message.includes('Insufficient payment'))       return 'Insufficient ETH sent for this mint.';
+  if (err.message.includes('Max supply reached'))         return 'Max supply has been reached.';
+  if (err.message.includes('Already at final phase'))     return 'Already at the final phase.';
+  if (err.message.includes('Nothing to withdraw'))        return 'No ETH to withdraw.';
   return 'Transaction failed. Please try again.';
 };
 
@@ -71,254 +79,41 @@ function Spinner() {
   );
 }
 
-function VoteBar({ forVotes, againstVotes, abstainVotes }) {
-  const total = Number(forVotes) + Number(againstVotes) + Number(abstainVotes);
-  if (total === 0) return null;
-  const forPct     = ((Number(forVotes) / total) * 100).toFixed(1);
-  const againstPct = ((Number(againstVotes) / total) * 100).toFixed(1);
-  const abstainPct = ((Number(abstainVotes) / total) * 100).toFixed(1);
-  return (
-    <div style={{ marginBottom: '12px' }}>
-      <div style={{ height: '8px', borderRadius: '9999px', overflow: 'hidden', display: 'flex', backgroundColor: 'rgba(15,76,92,0.1)' }}>
-        <div style={{ width: `${forPct}%`, backgroundColor: '#16a34a', transition: 'width 0.6s ease' }} />
-        <div style={{ width: `${againstPct}%`, backgroundColor: '#dc2626', transition: 'width 0.6s ease' }} />
-        <div style={{ width: `${abstainPct}%`, backgroundColor: '#94a3b8', transition: 'width 0.6s ease' }} />
-      </div>
-      <div className="flex justify-between mt-1">
-        <p className="text-xs" style={{ color: '#16a34a' }}>For {forPct}%</p>
-        <p className="text-xs" style={{ color: '#dc2626' }}>Against {againstPct}%</p>
-        <p className="text-xs" style={{ color: '#94a3b8' }}>Abstain {abstainPct}%</p>
-      </div>
-    </div>
-  );
-}
-
-function encodeAction(action, tokenAddress, stakingAddress) {
-  try {
-    if (action.type === 'transfer') {
-      const iface = new ethers.utils.Interface(['function transfer(address,uint256)']);
-      const amount = ethers.utils.parseUnits(action.transferAmount || '0', 18);
-      return {
-        target: tokenAddress,
-        value: ethers.BigNumber.from(0),
-        calldata: iface.encodeFunctionData('transfer', [action.transferTo, amount]),
-      };
-    }
-    if (action.type === 'mint') {
-      const iface = new ethers.utils.Interface(['function mint(address,uint256)']);
-      const amount = ethers.utils.parseUnits(action.mintAmount || '0', 18);
-      return {
-        target: tokenAddress,
-        value: ethers.BigNumber.from(0),
-        calldata: iface.encodeFunctionData('mint', [action.mintTo, amount]),
-      };
-    }
-    if (action.type === 'updateSetting') {
-      const iface = new ethers.utils.Interface(['function ' + action.settingFunction + '(uint256)']);
-      const value = ethers.utils.parseUnits(action.settingValue || '0', 0);
-      return {
-        target: action.settingTarget,
-        value: ethers.BigNumber.from(0),
-        calldata: iface.encodeFunctionData(action.settingFunction, [value]),
-      };
-    }
-    if (action.type === 'custom') {
-      const iface = new ethers.utils.Interface([`function ${action.signature}`]);
-      const funcName = action.signature.split('(')[0];
-      const paramTypes = action.signature
-        .replace(funcName, '').replace('(', '').replace(')', '')
-        .split(',').filter(p => p.trim() !== '');
-      const encodedCalldata = paramTypes.length === 0
-        ? iface.encodeFunctionData(funcName, [])
-        : iface.encodeFunctionData(funcName, JSON.parse(action.calldata || '[]'));
-      return {
-        target: action.target,
-        value: ethers.utils.parseEther(action.ethValue || '0'),
-        calldata: encodedCalldata,
-      };
-    }
-  } catch (err) {
-    throw new Error(`Failed to encode action: ${err.message}`);
-  }
-}
-
-function ActionForm({ action, index, onUpdate, onRemove, showRemove, tokenAddress, stakingAddress }) {
-  return (
-    <div className="rounded-xl p-4 mb-4"
-      style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
-      <div className="flex justify-between items-center mb-3">
-        <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#0f4c5c' }}>
-          Action {index + 1}
-        </p>
-        {showRemove && (
-          <button onClick={onRemove} className="text-xs px-2 py-1 rounded-lg"
-            style={{ backgroundColor: '#fee2e2', color: '#dc2626' }}>
-            Remove
-          </button>
-        )}
-      </div>
-
-      {/* ACTION TYPE */}
-      <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Action Type</p>
-      <select
-        value={action.type}
-        onChange={(e) => onUpdate('type', e.target.value)}
-        className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-4"
-        style={{ borderColor: '#bae6fd', color: '#334155', backgroundColor: '#fff' }}>
-        {ACTION_TYPES.map(t => (
-          <option key={t.value} value={t.value}>{t.label}</option>
-        ))}
-      </select>
-
-      {/* TRANSFER TOKENS */}
-      {action.type === 'transfer' && (
-        <>
-          <p className="text-xs mb-1" style={{ color: '#64748b' }}>
-            This will transfer tokens from the governance treasury to a recipient address.
-          </p>
-          <p className="text-xs uppercase tracking-wide mb-1 mt-3" style={{ color: '#64748b' }}>Recipient Address</p>
-          <input type="text" placeholder="0x... recipient wallet address"
-            value={action.transferTo || ''}
-            onChange={(e) => onUpdate('transferTo', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-3"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Amount (STK)</p>
-          <input type="number" placeholder="e.g. 100"
-            value={action.transferAmount || ''}
-            onChange={(e) => onUpdate('transferAmount', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-        </>
-      )}
-
-      {/* MINT TOKENS */}
-      {action.type === 'mint' && (
-        <>
-          <p className="text-xs mb-1" style={{ color: '#64748b' }}>
-            This will mint new tokens to a recipient address. Requires the timelock to hold MINTER_ROLE.
-          </p>
-          <p className="text-xs uppercase tracking-wide mb-1 mt-3" style={{ color: '#64748b' }}>Recipient Address</p>
-          <input type="text" placeholder="0x... recipient wallet address"
-            value={action.mintTo || ''}
-            onChange={(e) => onUpdate('mintTo', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-3"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Amount to Mint (STK)</p>
-          <input type="number" placeholder="e.g. 1000"
-            value={action.mintAmount || ''}
-            onChange={(e) => onUpdate('mintAmount', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-        </>
-      )}
-
-      {/* UPDATE A SETTING */}
-      {action.type === 'updateSetting' && (
-        <>
-          <p className="text-xs mb-1" style={{ color: '#64748b' }}>
-            This will call any single-value setter function on any contract the timelock has permission to access.
-          </p>
-          <p className="text-xs uppercase tracking-wide mb-1 mt-3" style={{ color: '#64748b' }}>Target Contract Address</p>
-          <input type="text" placeholder="0x... contract address to update"
-            value={action.settingTarget || ''}
-            onChange={(e) => onUpdate('settingTarget', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-3"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Function Name</p>
-          <input type="text" placeholder="e.g. setRewardPeriod or setFee or updateCap"
-            value={action.settingFunction || ''}
-            onChange={(e) => onUpdate('settingFunction', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-3"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>New Value</p>
-          <input type="number" placeholder="e.g. 30 for 30 days, or 500 for 0.5%"
-            value={action.settingValue || ''}
-            onChange={(e) => onUpdate('settingValue', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs mt-2" style={{ color: '#94a3b8' }}>
-            Note: the timelock must hold the appropriate role on the target contract for this to execute successfully.
-          </p>
-        </>
-      )}
-
-      {/* CUSTOM ACTION */}
-      {action.type === 'custom' && (
-        <>
-          <p className="text-xs mb-3" style={{ color: '#64748b' }}>
-            Advanced — manually specify any contract function to call.
-          </p>
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Target Contract Address</p>
-          <input type="text" placeholder="0x... contract to call"
-            value={action.target || ''}
-            onChange={(e) => onUpdate('target', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-3"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>ETH Value (usually 0)</p>
-          <input type="text" placeholder="0"
-            value={action.ethValue || '0'}
-            onChange={(e) => onUpdate('ethValue', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-3"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Function Signature</p>
-          <input type="text" placeholder="e.g. transfer(address,uint256)"
-            value={action.signature || ''}
-            onChange={(e) => onUpdate('signature', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-3"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Parameters (JSON array)</p>
-          <input type="text" placeholder='e.g. ["0xAddress...", "1000000000000000000"]'
-            value={action.calldata || ''}
-            onChange={(e) => onUpdate('calldata', e.target.value)}
-            className="w-full border rounded-xl px-4 py-3 text-sm outline-none"
-            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-          <p className="text-xs mt-2" style={{ color: '#94a3b8' }}>
-            Tip: token amounts must be in wei. Example: 100 STK = "100000000000000000000"
-          </p>
-        </>
-      )}
-    </div>
-  );
-}
-
 function App() {
-  const [governanceContract, setGovernanceContract] = useState(null);
-  const [tokenContract,      setTokenContract]      = useState(null);
-  const [readGovernance,     setReadGovernance]     = useState(null);
-  const [readToken,          setReadToken]          = useState(null);
-  const [account,            setAccount]            = useState(null);
+  const [nftContract,     setNftContract]     = useState(null);
+  const [readNft,         setReadNft]         = useState(null);
+  const [account,         setAccount]         = useState(null);
+  const [provider,        setProvider]        = useState(null);
 
-  // Token data
-  const [tokenBalance,   setTokenBalance]   = useState('0');
-  const [votingPower,    setVotingPower]    = useState('0');
-  const [delegatee,      setDelegatee]      = useState('');
-  const [isDelegated,    setIsDelegated]    = useState(false);
+  // Contract data
+  const [currentPhase,     setCurrentPhase]     = useState(0);
+  const [totalMinted,      setTotalMinted]      = useState('0');
+  const [maxSupply,        setMaxSupply]        = useState('0');
+  const [mintPrice,        setMintPrice]        = useState('0');
+  const [whitelistPrice,   setWhitelistPrice]   = useState('0');
+  const [merkleRoot,       setMerkleRoot]       = useState('');
+  const [userTokenIds,     setUserTokenIds]     = useState([]);
+  const [whitelistClaimed, setWhitelistClaimed] = useState(false);
+  const [contractBalance,  setContractBalance]  = useState('0');
 
-  // Governance data
-  const [proposals,      setProposals]      = useState([]);
-  const [votingDelay,    setVotingDelay]    = useState('0');
-  const [votingPeriod,   setVotingPeriod]   = useState('0');
-  const [quorumFraction, setQuorumFraction] = useState('0');
-  const [threshold,      setThreshold]      = useState('0');
-
-  // Proposal form
-  const [propTitle,       setPropTitle]       = useState('');
-  const [propDescription, setPropDescription] = useState('');
-  const [propActions,     setPropActions]     = useState([{ type: 'transfer', transferTo: '', transferAmount: '' }]);
-  const [proposalFilter, setProposalFilter] = useState('active');
-
-  // Delegate to address
-  const [delegateTarget, setDelegateTarget] = useState('');
-
-  // Vote reasons
-  const [voteReasons, setVoteReasons] = useState({});
+  // Admin inputs
+  const [newMintPrice,      setNewMintPrice]      = useState('');
+  const [newWhitelistPrice, setNewWhitelistPrice] = useState('');
+  const [newMerkleRoot,     setNewMerkleRoot]     = useState('');
+  const [newBaseURI,        setNewBaseURI]        = useState('');
+  const [withdrawAddress,   setWithdrawAddress]   = useState('');
+  const [recoverToken,      setRecoverToken]      = useState('');
+  const [recoverTo,         setRecoverTo]         = useState('');
+  const [recoverAmount,     setRecoverAmount]     = useState('');
+  const [isAdmin,           setIsAdmin]           = useState(false);
+  const [showAdminPanel,    setShowAdminPanel]    = useState(false);
 
   // Status
   const [status,      setStatus]      = useState('');
   const [statusStyle, setStatusStyle] = useState(STATUS_COLORS.default);
   const [isLoading,   setIsLoading]   = useState(false);
   const [txHash,      setTxHash]      = useState('');
-  const [showDelegateInput, setShowDelegateInput] = useState(false);
+  const [isPaused,    setIsPaused]    = useState(false);
 
   const connectWallet = async () => {
     try {
@@ -342,25 +137,22 @@ function App() {
       const _account = await _signer.getAddress();
 
       const isLocalhost = chainId === '0x7a69';
-      const alchemyProvider = isLocalhost
+      const rpcProvider = isLocalhost
         ? new ethers.providers.JsonRpcProvider('http://127.0.0.1:8545')
         : new ethers.providers.JsonRpcProvider(
             process.env.REACT_APP_ALCHEMY_URL,
             { name: 'sepolia', chainId: 11155111 }
           );
 
-      const _governanceContract = new ethers.Contract(GOVERNANCE_ADDRESS, GOVERNANCE_ABI, _signer);
-      const _tokenContract      = new ethers.Contract(TOKEN_ADDRESS, TOKEN_ABI, _signer);
-      const _readGovernance     = new ethers.Contract(GOVERNANCE_ADDRESS, GOVERNANCE_ABI, alchemyProvider);
-      const _readToken          = new ethers.Contract(TOKEN_ADDRESS, TOKEN_ABI, alchemyProvider);
+      const _nftContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, _signer);
+      const _readNft     = new ethers.Contract(NFT_ADDRESS, NFT_ABI, rpcProvider);
 
-      setGovernanceContract(_governanceContract);
-      setTokenContract(_tokenContract);
-      setReadGovernance(_readGovernance);
-      setReadToken(_readToken);
+      setNftContract(_nftContract);
+      setReadNft(_readNft);
       setAccount(_account);
+      setProvider(rpcProvider);
 
-      await loadDashboardData(_readGovernance, _readToken, _account);
+      await loadDashboardData(_readNft, _account, rpcProvider);
     } catch (err) {
       setStatus('Error connecting wallet: ' + err.message);
       setStatusStyle(STATUS_COLORS.error);
@@ -372,19 +164,22 @@ function App() {
     const handleAccountChange = async (accounts) => {
       setStatus('');
       setTxHash('');
-      setVoteReasons({});
       if (accounts.length === 0) {
         setAccount(null);
-        setGovernanceContract(null);
-        setTokenContract(null);
-        setReadGovernance(null);
-        setReadToken(null);
-        setTokenBalance('0');
-        setVotingPower('0');
-        setDelegatee('');
-        setIsDelegated(false);
-        setProposals([]);
-        setShowDelegateInput(false);
+        setNftContract(null);
+        setReadNft(null);
+        setProvider(null);
+        setCurrentPhase(0);
+        setTotalMinted('0');
+        setMaxSupply('0');
+        setMintPrice('0');
+        setWhitelistPrice('0');
+        setMerkleRoot('');
+        setUserTokenIds([]);
+        setWhitelistClaimed(false);
+        setIsAdmin(false);
+        setContractBalance('0');
+        setIsPaused(false);
       } else {
         await connectWallet();
       }
@@ -394,57 +189,44 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadDashboardData = async (_readGovernance, _readToken, _account) => {
+  const loadDashboardData = async (_readNft, _account, _provider) => {
     try {
-      const _balance   = await _readToken.balanceOf(_account);
-      const _votes     = await _readToken.getVotes(_account);
-      const _delegatee = await _readToken.delegates(_account);
+      const _phase           = await _readNft.currentPhase();
+      const _totalMinted     = await _readNft.totalMinted();
+      const _maxSupply       = await _readNft.maxSupply();
+      const _mintPrice       = await _readNft.mintPrice();
+      const _whitelistPrice  = await _readNft.whitelistMintPrice();
+      const _merkleRoot      = await _readNft.merkleRoot();
+      const _claimed         = await _readNft.whitelistClaimed(_account);
+      const _contractBalance = await _provider.getBalance(NFT_ADDRESS);
+      const _isPaused        = await _readNft.paused();
 
-      setTokenBalance(ethers.utils.formatUnits(_balance, 18));
-      setVotingPower(ethers.utils.formatUnits(_votes, 18));
-      setDelegatee(_delegatee);
-      setIsDelegated(_delegatee !== ethers.constants.AddressZero);
+      setCurrentPhase(_phase);
+      setTotalMinted(_totalMinted.toString());
+      setMaxSupply(_maxSupply.toString());
+      setMintPrice(ethers.utils.formatEther(_mintPrice));
+      setWhitelistPrice(ethers.utils.formatEther(_whitelistPrice));
+      setMerkleRoot(_merkleRoot);
+      setWhitelistClaimed(_claimed);
+      setContractBalance(ethers.utils.formatEther(_contractBalance));
+      setIsPaused(_isPaused);
 
-      const _votingDelay  = await _readGovernance.votingDelay();
-      const _votingPeriod = await _readGovernance.votingPeriod();
-      const _threshold    = await _readGovernance.proposalThreshold();
-      const _quorum       = await _readGovernance['quorumNumerator()']();
-
-      setVotingDelay(_votingDelay.toString());
-      setVotingPeriod(_votingPeriod.toString());
-      setThreshold(ethers.utils.formatUnits(_threshold, 18));
-      setQuorumFraction(_quorum.toString());
+      const ADMIN_ROLE = await _readNft.ADMIN_ROLE();
+      const _isAdmin = await _readNft.hasRole(ADMIN_ROLE, _account);
+      setIsAdmin(_isAdmin);
 
       try {
-        const filter = _readGovernance.filters.ProposalCreated();
-        const events = await _readGovernance.queryFilter(filter);
+        const filterTo   = _readNft.filters.Transfer(null, _account);
+        const filterFrom = _readNft.filters.Transfer(_account, null);
+        const toEvents   = await _readNft.queryFilter(filterTo);
+        const fromEvents = await _readNft.queryFilter(filterFrom);
 
-        const loadedProposals = await Promise.all(events.map(async (event) => {
-          const proposalId   = event.args.proposalId;
-          const state        = await _readGovernance.state(proposalId);
-          const hasVoted     = await _readGovernance.hasVoted(proposalId, _account);
-          const votes        = await _readGovernance.proposalVotes(proposalId);
-          const snapshot     = await _readGovernance.proposalSnapshot(proposalId);
-          const deadline     = await _readGovernance.proposalDeadline(proposalId);
-          return {
-            id: proposalId,
-            description: event.args.description,
-            stateLabel: STATES[state],
-            targets: event.args.targets,
-            ethValues: event.args[3],
-            calldatas: event.args.calldatas,
-            hasVoted,
-            forVotes:     ethers.utils.formatUnits(votes.forVotes, 18),
-            againstVotes: ethers.utils.formatUnits(votes.againstVotes, 18),
-            abstainVotes: ethers.utils.formatUnits(votes.abstainVotes, 18),
-            snapshot: snapshot.toString(),
-            deadline: deadline.toString(),
-          };
-        }));
-
-        setProposals(loadedProposals.reverse());
-      } catch (err) {
-        console.log('No proposals yet');
+        const received = new Set(toEvents.map(e => e.args.tokenId.toString()));
+        const sent     = new Set(fromEvents.map(e => e.args.tokenId.toString()));
+        const owned    = [...received].filter(id => !sent.has(id));
+        setUserTokenIds(owned);
+      } catch {
+        setUserTokenIds([]);
       }
 
     } catch (err) {
@@ -454,137 +236,38 @@ function App() {
   };
 
   const handleRefresh = async () => {
-    if (!readGovernance || !account) return;
+    if (!readNft || !account) return;
     setStatus('Refreshing...');
     setStatusStyle(STATUS_COLORS.default);
-    await loadDashboardData(readGovernance, readToken, account);
+    await loadDashboardData(readNft, account, provider);
     setStatus('');
   };
 
-  const handleSelfDelegate = async () => {
+  // ─────────────────────────────────────────
+  // Minting
+  // ─────────────────────────────────────────
+
+  const handleWhitelistMint = async () => {
     try {
-      setStatus('Activating voting power...');
-      setStatusStyle(STATUS_COLORS.admin);
-      setIsLoading(true);
-      const tx = await tokenContract.selfDelegate();
-      await tx.wait();
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setIsLoading(false);
-      setTxHash(tx.hash);
-      setStatus('Voting power activated!');
-      setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readGovernance, readToken, account);
-    } catch (err) {
-      setIsLoading(false);
-      setTxHash('');
-      setStatus(parseError(err));
-      setStatusStyle(STATUS_COLORS.error);
-    }
-  };
-
-  const handleDelegateTo = async () => {
-    if (!delegateTarget || !ethers.utils.isAddress(delegateTarget)) {
-      setStatus('Please enter a valid wallet address to delegate to.');
-      setStatusStyle(STATUS_COLORS.error);
-      return;
-    }
-    try {
-      setStatus('Delegating voting power...');
-      setStatusStyle(STATUS_COLORS.admin);
-      setIsLoading(true);
-      const tx = await tokenContract.delegate(delegateTarget);
-      await tx.wait();
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setIsLoading(false);
-      setTxHash(tx.hash);
-      setStatus('Voting power delegated successfully!');
-      setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readGovernance, readToken, account);
-      setDelegateTarget('');
-    } catch (err) {
-      setIsLoading(false);
-      setTxHash('');
-      setStatus(parseError(err));
-      setStatusStyle(STATUS_COLORS.error);
-    }
-  };
-
-  const handlePropose = async () => {
-    if (!propTitle) {
-      setStatus('Please enter a proposal title.');
-      setStatusStyle(STATUS_COLORS.error);
-      return;
-    }
-    if (!propDescription) {
-      setStatus('Please enter a proposal description.');
-      setStatusStyle(STATUS_COLORS.error);
-      return;
-    }
-
-    try {
-      setStatus('Creating proposal...');
-      setStatusStyle(STATUS_COLORS.propose);
-      setIsLoading(true);
-
-      const targets   = [];
-      const values    = [];
-      const calldatas = [];
-
-      for (const action of propActions) {
-        const encoded = encodeAction(action, TOKEN_ADDRESS, action.stakingTarget || '');
-        targets.push(encoded.target);
-        values.push(encoded.value);
-        calldatas.push(encoded.calldata);
+      const proof = getMerkleProof(account);
+      if (proof.length === 0) {
+        setStatus('Your address is not on the whitelist.');
+        setStatusStyle(STATUS_COLORS.error);
+        return;
       }
-
-      const fullDescription = `${propTitle} — ${propDescription}`;
-
-      const tx = await governanceContract.propose(targets, values, calldatas, fullDescription);
-      await tx.wait();
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setIsLoading(false);
-      setTxHash(tx.hash);
-      setStatus('Proposal created successfully!');
-      setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readGovernance, readToken, account);
-      setPropTitle('');
-      setPropDescription('');
-      setPropActions([{ type: 'transfer', transferTo: '', transferAmount: '' }]);
-    } catch (err) {
-      setIsLoading(false);
-      setTxHash('');
-      setStatus(parseError(err));
-      setStatusStyle(STATUS_COLORS.error);
-    }
-  };
-
-  const handleVote = async (proposalId, support) => {
-    try {
-      const voteLabels = { 0: 'Against', 1: 'For', 2: 'Abstain' };
-      const voteColors = {
-        0: { backgroundColor: '#dc2626', color: '#fff' }, // Against — red
-        1: { backgroundColor: '#16a34a', color: '#fff' }, // For — green
-        2: { backgroundColor: '#64748b', color: '#fff' }, // Abstain — gray
-      };
-      setStatus(`Casting ${voteLabels[support]} vote...`);
-      setStatusStyle(voteColors[support]);
+      setStatus('Minting whitelist pass...');
+      setStatusStyle(STATUS_COLORS.mint);
       setIsLoading(true);
-      const reason = voteReasons[proposalId.toString()] || '';
-      const tx = reason
-        ? await governanceContract.castVoteWithReason(proposalId, support, reason)
-        : await governanceContract.castVote(proposalId, support);
-      await tx.wait();
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setIsLoading(false);
-      setTxHash(tx.hash);
-      setStatus(`${voteLabels[support]} vote cast successfully!`);
-      setVoteReasons(prev => {
-        const updated = { ...prev };
-        delete updated[proposalId.toString()];
-        return updated;
+      const tx = await nftContract.whitelistMint(proof, {
+        value: ethers.utils.parseEther(whitelistPrice)
       });
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Whitelist pass minted successfully!');
       setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readGovernance, readToken, account);
+      await loadDashboardData(readNft, account, provider);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -593,29 +276,239 @@ function App() {
     }
   };
 
-  const handleQueue = async (proposal) => {
-
+  const handlePublicMint = async () => {
     try {
-      setStatus('Queueing proposal in timelock...');
-      setStatusStyle(STATUS_COLORS.queue);
+      setStatus('Minting membership pass...');
+      setStatusStyle(STATUS_COLORS.mint);
       setIsLoading(true);
-      const descriptionHash = ethers.utils.id(proposal.description);
-  
-      const values = proposal.ethValues.map(v => ethers.BigNumber.from(v.toString()));
-  
-      const tx = await governanceContract.queue(
-        proposal.targets,
-        values,
-        proposal.calldatas,
-        descriptionHash
+      const tx = await nftContract.publicMint({
+        value: ethers.utils.parseEther(mintPrice)
+      });
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Membership pass minted successfully!');
+      setStatusStyle(STATUS_COLORS.success);
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  // ─────────────────────────────────────────
+  // Admin
+  // ─────────────────────────────────────────
+
+  const handleAdvancePhase = async () => {
+    try {
+      setStatus('Advancing phase...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await nftContract.advancePhase();
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Phase advanced successfully!');
+      setStatusStyle(STATUS_COLORS.success);
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handlePause = async () => {
+    try {
+      setStatus('Pausing contract...');
+      setStatusStyle(STATUS_COLORS.pause);
+      setIsLoading(true);
+      const tx = await nftContract.pause();
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Contract paused.');
+      setStatusStyle(STATUS_COLORS.success);
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handleUnpause = async () => {
+    try {
+      setStatus('Unpausing contract...');
+      setStatusStyle(STATUS_COLORS.unpause);
+      setIsLoading(true);
+      const tx = await nftContract.unpause();
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Contract unpaused.');
+      setStatusStyle(STATUS_COLORS.success);
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handleSetMintPrice = async () => {
+    if (!newMintPrice) return;
+    try {
+      setStatus('Updating mint price...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await nftContract.setMintPrice(ethers.utils.parseEther(newMintPrice));
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Mint price updated!');
+      setStatusStyle(STATUS_COLORS.success);
+      setNewMintPrice('');
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handleSetWhitelistPrice = async () => {
+    if (!newWhitelistPrice) return;
+    try {
+      setStatus('Updating whitelist price...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await nftContract.setWhitelistMintPrice(ethers.utils.parseEther(newWhitelistPrice));
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Whitelist price updated!');
+      setStatusStyle(STATUS_COLORS.success);
+      setNewWhitelistPrice('');
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handleSetMerkleRoot = async () => {
+    if (!newMerkleRoot) return;
+    try {
+      setStatus('Updating Merkle root...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await nftContract.setMerkleRoot(newMerkleRoot);
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Merkle root updated!');
+      setStatusStyle(STATUS_COLORS.success);
+      setNewMerkleRoot('');
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handleSetBaseURI = async () => {
+    if (!newBaseURI) return;
+    try {
+      setStatus('Updating base URI...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await nftContract.setBaseURI(newBaseURI);
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('Base URI updated!');
+      setStatusStyle(STATUS_COLORS.success);
+      setNewBaseURI('');
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    if (!withdrawAddress || !ethers.utils.isAddress(withdrawAddress)) {
+      setStatus('Please enter a valid withdrawal address.');
+      setStatusStyle(STATUS_COLORS.error);
+      return;
+    }
+    try {
+      setStatus('Withdrawing ETH...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await nftContract.withdraw(withdrawAddress);
+      await tx.wait();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setIsLoading(false);
+      setTxHash(tx.hash);
+      setStatus('ETH withdrawn successfully!');
+      setStatusStyle(STATUS_COLORS.success);
+      setWithdrawAddress('');
+      await loadDashboardData(readNft, account, provider);
+    } catch (err) {
+      setIsLoading(false);
+      setTxHash('');
+      setStatus(parseError(err));
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  const handleRecoverERC20 = async () => {
+    if (!recoverToken || !recoverTo || !recoverAmount) {
+      setStatus('Please fill in all recovery fields.');
+      setStatusStyle(STATUS_COLORS.error);
+      return;
+    }
+    try {
+      setStatus('Recovering ERC-20 tokens...');
+      setStatusStyle(STATUS_COLORS.admin);
+      setIsLoading(true);
+      const tx = await nftContract.recoverERC20(
+        recoverToken,
+        recoverTo,
+        ethers.utils.parseUnits(recoverAmount, 18)
       );
       await tx.wait();
       await new Promise(resolve => setTimeout(resolve, 2000));
       setIsLoading(false);
       setTxHash(tx.hash);
-      setStatus('Proposal queued in timelock!');
+      setStatus('ERC-20 tokens recovered!');
       setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readGovernance, readToken, account);
+      setRecoverToken('');
+      setRecoverTo('');
+      setRecoverAmount('');
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -624,72 +517,10 @@ function App() {
     }
   };
 
-  const handleExecute = async (proposal) => {
-    try {
-      setStatus('Executing proposal...');
-      setStatusStyle(STATUS_COLORS.execute);
-      setIsLoading(true);
-      const descriptionHash = ethers.utils.id(proposal.description);
-      const values = proposal.ethValues.map(v => ethers.BigNumber.from(v.toString()));
-      const tx = await governanceContract.execute(
-        proposal.targets, values, proposal.calldatas, descriptionHash
-      );
-      await tx.wait();
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setIsLoading(false);
-      setTxHash(tx.hash);
-      setStatus('Proposal executed successfully!');
-      setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readGovernance, readToken, account);
-    } catch (err) {
-      setIsLoading(false);
-      setTxHash('');
-      setStatus(parseError(err));
-      setStatusStyle(STATUS_COLORS.error);
-    }
-  };
-
-  const handleCancel = async (proposal) => {
-    try {
-      setStatus('Canceling proposal...');
-      setStatusStyle(STATUS_COLORS.error);
-      setIsLoading(true);
-      const descriptionHash = ethers.utils.id(proposal.description);
-      const values = proposal.ethValues.map(v => ethers.BigNumber.from(v.toString()));
-      const tx = await governanceContract.cancel(
-        proposal.targets, values, proposal.calldatas, descriptionHash
-      );
-      await tx.wait();
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      setIsLoading(false);
-      setTxHash(tx.hash);
-      setStatus('Proposal canceled.');
-      setStatusStyle(STATUS_COLORS.default);
-      await loadDashboardData(readGovernance, readToken, account);
-    } catch (err) {
-      setIsLoading(false);
-      setTxHash('');
-      setStatus(parseError(err));
-      setStatusStyle(STATUS_COLORS.error);
-    }
-  };
-
-  const addAction = () => {
-    setPropActions([...propActions, { type: 'transfer', transferTo: '', transferAmount: '' }]);
-  };
-
-  const removeAction = (index) => {
-    setPropActions(propActions.filter((_, i) => i !== index));
-  };
-
-  const updateAction = (index, field, value) => {
-    const updated = [...propActions];
-    updated[index][field] = value;
-    setPropActions(updated);
-  };
-
-  const formatTokens = (amount) =>
-    Number(amount).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+  const phaseLabel = PHASE_LABELS[currentPhase] || 'Unknown';
+  const supplyPct  = maxSupply > 0 ? ((Number(totalMinted) / Number(maxSupply)) * 100).toFixed(1) : '0';
+  const isWhitelisted = getMerkleProof(account).length > 0;
+  const isSoldOut = Number(totalMinted) >= Number(maxSupply);
 
   return (
     <div>
@@ -706,10 +537,10 @@ function App() {
           <div className="flex justify-between items-center mb-6">
             <div>
               <h1 className="text-5xl font-bold tracking-tight" style={{ color: '#0f4c5c' }}>
-                Token <span style={{ color: '#5c2d0e' }}>Governance</span> Dashboard
+                NFT <span style={{ color: GOLD }}>Membership</span> Dashboard
               </h1>
               <p className="text-sm mt-2 uppercase tracking-widest font-medium" style={{ color: '#64748b' }}>
-                On-Chain Governance Management Interface
+                On-Chain Membership Pass Management Interface
               </p>
             </div>
             {account && (
@@ -753,17 +584,17 @@ function App() {
 
           {!account ? (
             <div className="text-center py-32">
-              <div className="mb-6 text-6xl">⚖️</div>
+              <div className="mb-6 text-6xl">🎫</div>
               <button onClick={connectWallet}
                 className="px-8 py-4 rounded-xl font-semibold text-white text-lg transition-all hover:opacity-90 mb-6 btn-hover"
-                style={{ backgroundColor: '#5c2d0e' }}>
+                style={{ backgroundColor: GOLD }}>
                 Connect Wallet
               </button>
               <p className="text-3xl font-bold mb-3 tracking-tight" style={{ color: '#0f4c5c' }}>
-                Connect your wallet to participate in governance
+                Connect your wallet to manage membership passes
               </p>
               <p className="text-sm uppercase tracking-widest" style={{ color: '#64748b' }}>
-                Make sure you're on the Sepolia test network
+                Make sure you're on the Sepolia test network or Localhost 8545
               </p>
             </div>
           ) : (
@@ -771,10 +602,10 @@ function App() {
               {/* STATS CARDS */}
               <div className="grid grid-cols-4 gap-3 mb-8">
                 {[
-                  { label: 'Token Balance',      value: formatTokens(tokenBalance) + ' STK' },
-                  { label: 'Voting Power',        value: formatTokens(votingPower) + ' STK' },
-                  { label: 'Proposal Threshold',  value: formatTokens(threshold) + ' STK' },
-                  { label: 'Quorum Required',     value: quorumFraction + '%' },
+                  { label: 'Current Phase', value: phaseLabel, valueColor: PHASE_COLORS[phaseLabel] },
+                  { label: 'Total Minted',  value: `${totalMinted} / ${maxSupply}` },
+                  { label: 'Supply Minted', value: `${supplyPct}%` },
+                  { label: 'Passes Owned',  value: userTokenIds.length },
                 ].map((stat) => (
                   <div key={stat.label} className="rounded-2xl p-4 shadow-sm card-hover"
                     style={{
@@ -782,126 +613,206 @@ function App() {
                       backdropFilter: 'blur(12px)',
                       WebkitBackdropFilter: 'blur(12px)',
                       border: '1px solid rgba(255,255,255,0.8)',
-                      borderLeft: '4px solid #5c2d0e',
+                      borderLeft: `4px solid ${GOLD}`,
                     }}>
                     <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>{stat.label}</p>
-                    <p className="text-lg font-bold" style={{ color: '#0f4c5c' }}>{stat.value}</p>
+                    <p className="text-lg font-bold" style={{ color: stat.valueColor || '#0f4c5c' }}>{stat.value}</p>
                   </div>
                 ))}
               </div>
 
-              {/* DELEGATION CARD */}
+              {/* SUPPLY BAR */}
               <div className="rounded-2xl p-6 mb-8 shadow-sm card-hover"
                 style={{
                   backgroundColor: 'rgba(255,255,255,0.55)',
                   backdropFilter: 'blur(12px)',
                   WebkitBackdropFilter: 'blur(12px)',
                   border: '1px solid rgba(255,255,255,0.8)',
-                  borderLeft: '4px solid #5c2d0e',
+                  borderLeft: `4px solid ${GOLD}`,
                 }}>
-                <h2 className="text-lg font-bold mb-2" style={{ color: '#0f4c5c' }}>Voting Power</h2>
+                <h2 className="text-lg font-bold mb-4" style={{ color: '#0f4c5c' }}>Supply</h2>
+                <div style={{ height: '8px', borderRadius: '9999px', overflow: 'hidden', backgroundColor: 'rgba(15,76,92,0.1)', marginBottom: '8px' }}>
+                  <div style={{
+                    width: `${supplyPct}%`,
+                    height: '100%',
+                    backgroundColor: GOLD,
+                    transition: 'width 0.6s ease',
+                  }} />
+                </div>
+                <div className="flex justify-between">
+                  <p className="text-xs" style={{ color: '#64748b' }}>{totalMinted} minted</p>
+                  <p className="text-xs" style={{ color: '#64748b' }}>{Number(maxSupply) - Number(totalMinted)} remaining</p>
+                </div>
+              </div>
 
-                {isDelegated ? (
-                  <div>
-                    <p className="text-sm mb-1" style={{ color: '#64748b' }}>
-                      <span style={{ color: '#22c55e' }}>● Active</span> — Your voting power is delegated and ready
-                    </p>
-                    <p className="text-xs font-mono mb-4" style={{ color: '#64748b' }}>
-                      Delegated to: {delegatee.slice(0, 6)}...{delegatee.slice(-4)}
-                    </p>
+              {/* MINT CARD */}
+              <div className="rounded-2xl p-6 mb-8 shadow-sm card-hover"
+                style={{
+                  backgroundColor: 'rgba(255,255,255,0.55)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(255,255,255,0.8)',
+                  borderLeft: `4px solid ${GOLD}`,
+                }}>
+                <h2 className="text-lg font-bold mb-2" style={{ color: '#0f4c5c' }}>Mint a Pass</h2>
+                <p className="text-xs uppercase tracking-wide mb-4" style={{ color: '#64748b' }}>
+                  Phase: <span style={{ color: PHASE_COLORS[phaseLabel], fontWeight: 700 }}>{phaseLabel}</span>
+                </p>
 
-                    {/* CHANGE DELEGATION — collapsed toggle */}
-                    <button
-                      onClick={() => setShowDelegateInput(prev => !prev)}
-                      className="text-xs font-semibold transition-all hover:opacity-80"
-                      style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                      {showDelegateInput ? '▲ Hide' : '▼ Change delegation address'}
-                    </button>
+                {currentPhase === 0 && (
+                  <p className="text-sm" style={{ color: '#64748b' }}>
+                    ⏸ Minting is currently paused. Check back when the whitelist phase opens.
+                  </p>
+                )}
 
-                    {showDelegateInput && (
-                      <div className="flex gap-3 mt-3">
-                        <input type="text" placeholder="0x... wallet address to delegate to"
-                          value={delegateTarget}
-                          onChange={(e) => setDelegateTarget(e.target.value)}
-                          className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
-                          style={{ borderColor: '#bae6fd', color: '#334155' }} />
-                        <button onClick={handleDelegateTo} disabled={isLoading}
-                          className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                          style={{
-                            backgroundColor: '#5c2d0e',
-                            opacity: isLoading ? 0.6 : 1,
-                            cursor: isLoading ? 'not-allowed' : 'pointer',
-                          }}>
-                          Delegate
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ) : (
+                {currentPhase === 1 && (
                   <div>
                     <p className="text-sm mb-4" style={{ color: '#64748b' }}>
-                      ⚠️ Activate your voting power before creating or voting on proposals. This is a one time setup.
-                    </p>
-
-                    {/* PRIMARY ACTION */}
-                    <button onClick={handleSelfDelegate} disabled={isLoading}
-                      className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover mb-4"
-                      style={{
-                        backgroundColor: '#5c2d0e',
-                        opacity: isLoading ? 0.6 : 1,
-                        cursor: isLoading ? 'not-allowed' : 'pointer',
-                      }}>
-                      Activate My Voting Power
-                    </button>
-
-                    {/* ADVANCED — collapsed toggle */}
-                    <div>
-                      <button
-                        onClick={() => setShowDelegateInput(prev => !prev)}
-                        className="text-xs font-semibold transition-all hover:opacity-80"
-                        style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                        {showDelegateInput ? '▲ Hide' : '▼ Or delegate to another address instead'}
-                      </button>
-
-                      {showDelegateInput && (
-                        <div className="flex gap-3 mt-3">
-                          <input type="text" placeholder="0x... wallet address to delegate to"
-                            value={delegateTarget}
-                            onChange={(e) => setDelegateTarget(e.target.value)}
-                            className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
-                            style={{ borderColor: '#bae6fd', color: '#334155' }} />
-                          <button onClick={handleDelegateTo} disabled={isLoading}
-                            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                            style={{
-                              backgroundColor: '#5c2d0e',
-                              opacity: isLoading ? 0.6 : 1,
-                              cursor: isLoading ? 'not-allowed' : 'pointer',
-                            }}>
-                            Delegate
-                          </button>
-                        </div>
+                      Whitelist phase is active. Price: <strong>{whitelistPrice} ETH</strong> per pass.
+                      {whitelistClaimed && (
+                        <span style={{ color: '#22c55e' }}> ✅ You have already claimed your whitelist mint.</span>
                       )}
-                    </div>
+                    </p>
+                    {!whitelistClaimed && (
+                      <>
+                        {isWhitelisted ? (
+                          <>
+                            <p className="text-xs mb-4" style={{ color: '#22c55e' }}>
+                              ✅ Your wallet is on the whitelist.
+                            </p>
+                            {isSoldOut ? (
+                              <div>
+                                <button disabled
+                                  className="px-6 py-3 rounded-xl font-semibold text-white"
+                                  style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
+                                  Sold Out
+                                </button>
+                                <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
+                                  ⚠️ All membership passes have been minted.
+                                </p>
+                              </div>
+                            ) : isPaused ? (
+                              <div>
+                                <button disabled
+                                  className="px-6 py-3 rounded-xl font-semibold text-white"
+                                  style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
+                                  Mint Whitelist Pass — {whitelistPrice} ETH
+                                </button>
+                                <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
+                                  ⚠️ Minting is currently paused.
+                                </p>
+                              </div>
+                            ) : (
+                              <button onClick={handleWhitelistMint} disabled={isLoading}
+                                className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
+                                style={{
+                                  backgroundColor: GOLD,
+                                  opacity: isLoading ? 0.6 : 1,
+                                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                                }}>
+                                Mint Whitelist Pass — {whitelistPrice} ETH
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm" style={{ color: '#dc2626' }}>
+                            ✗ Your wallet is not on the whitelist.
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {currentPhase === 2 && (
+                  <div>
+                    <p className="text-sm mb-4" style={{ color: '#64748b' }}>
+                      Public mint is open. Price: <strong>{mintPrice} ETH</strong> per pass.
+                    </p>
+                    {isSoldOut ? (
+                      <div>
+                        <button disabled
+                          className="px-6 py-3 rounded-xl font-semibold text-white"
+                          style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
+                          Sold Out
+                        </button>
+                        <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
+                          ⚠️ All membership passes have been minted.
+                        </p>
+                      </div>
+                    ) : isPaused ? (
+                      <div>
+                        <button disabled
+                          className="px-6 py-3 rounded-xl font-semibold text-white"
+                          style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
+                          Mint Pass — {mintPrice} ETH
+                        </button>
+                        <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
+                          ⚠️ Minting is currently paused.
+                        </p>
+                      </div>
+                    ) : (
+                      <button onClick={handlePublicMint} disabled={isLoading}
+                        className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
+                        style={{
+                          backgroundColor: GOLD,
+                          opacity: isLoading ? 0.6 : 1,
+                          cursor: isLoading ? 'not-allowed' : 'pointer',
+                        }}>
+                        Mint Pass — {mintPrice} ETH
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* GOVERNANCE SETTINGS */}
+              {/* YOUR PASSES */}
               <div className="rounded-2xl p-6 mb-8 shadow-sm card-hover"
                 style={{
                   backgroundColor: 'rgba(255,255,255,0.55)',
                   backdropFilter: 'blur(12px)',
                   WebkitBackdropFilter: 'blur(12px)',
                   border: '1px solid rgba(255,255,255,0.8)',
-                  borderLeft: '4px solid #5c2d0e',
+                  borderLeft: `4px solid ${GOLD}`,
                 }}>
-                <h2 className="text-lg font-bold mb-4" style={{ color: '#0f4c5c' }}>Governance Settings</h2>
+                <h2 className="text-lg font-bold mb-4" style={{ color: '#0f4c5c' }}>Your Passes</h2>
+                {userTokenIds.length === 0 ? (
+                  <p className="text-sm" style={{ color: '#64748b' }}>
+                    You don't own any membership passes yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-3">
+                    {userTokenIds.map((id) => (
+                      <div key={id} className="rounded-xl px-4 py-3 text-center"
+                        style={{
+                          backgroundColor: 'rgba(255,255,255,0.7)',
+                          border: `1px solid ${GOLD}40`,
+                          minWidth: '80px',
+                        }}>
+                        <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Pass</p>
+                        <p className="text-lg font-bold" style={{ color: GOLD }}>#{id}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* MINT SETTINGS */}
+              <div className="rounded-2xl p-6 mb-8 shadow-sm card-hover"
+                style={{
+                  backgroundColor: 'rgba(255,255,255,0.55)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(255,255,255,0.8)',
+                  borderLeft: `4px solid ${GOLD}`,
+                }}>
+                <h2 className="text-lg font-bold mb-4" style={{ color: '#0f4c5c' }}>Mint Settings</h2>
                 <div className="grid grid-cols-4 gap-4">
                   {[
-                    { label: 'Voting Delay',        value: (Number(votingDelay) / 7200).toFixed(1) + ' days' },
-                    { label: 'Voting Period',        value: (Number(votingPeriod) / 50400).toFixed(1) + ' weeks' },
-                    { label: 'Timelock Delay',       value: '2 days' },
-                    { label: 'Total Proposals',      value: proposals.length },
+                    { label: 'Public Mint Price', value: mintPrice + ' ETH' },
+                    { label: 'Whitelist Price',   value: whitelistPrice + ' ETH' },
+                    { label: 'Max Supply',        value: maxSupply },
+                    { label: 'Merkle Root',       value: merkleRoot.slice(0, 10) + '...' },
                   ].map((setting) => (
                     <div key={setting.label}>
                       <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>{setting.label}</p>
@@ -911,337 +822,209 @@ function App() {
                 </div>
               </div>
 
-              {/* CREATE PROPOSAL */}
-              <div className="rounded-2xl p-6 mb-8 shadow-sm card-hover"
-                style={{
-                  backgroundColor: 'rgba(255,255,255,0.55)',
-                  backdropFilter: 'blur(12px)',
-                  WebkitBackdropFilter: 'blur(12px)',
-                  border: '1px solid rgba(255,255,255,0.8)',
-                  borderLeft: '4px solid #5c2d0e',
-                }}>
-                <h2 className="text-lg font-bold mb-4" style={{ color: '#0f4c5c' }}>Create Proposal</h2>
-
-                <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Proposal Title</p>
-                <input type="text"
-                  placeholder="Short title for this proposal e.g. Treasury Transfer #1"
-                  value={propTitle}
-                  onChange={(e) => setPropTitle(e.target.value)}
-                  className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-4"
-                  style={{ borderColor: '#bae6fd', color: '#334155' }} />
-
-                <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Description</p>
-                <textarea
-                  placeholder="Describe what this proposal does and why token holders should vote for it..."
-                  value={propDescription}
-                  onChange={(e) => setPropDescription(e.target.value)}
-                  rows={3}
-                  className="w-full border rounded-xl px-4 py-3 text-sm outline-none mb-6"
-                  style={{ borderColor: '#bae6fd', color: '#334155', resize: 'vertical' }} />
-
-                <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>
-                  Actions — {propActions.length} action{propActions.length > 1 ? 's' : ''} added
-                </p>
-
-                {propActions.map((action, index) => (
-                  <ActionForm
-                    key={index}
-                    action={action}
-                    index={index}
-                    onUpdate={(field, value) => updateAction(index, field, value)}
-                    onRemove={() => removeAction(index)}
-                    showRemove={propActions.length > 1}
-                    tokenAddress={TOKEN_ADDRESS}
-                    stakingAddress={action.stakingTarget || ''}
-                  />
-                ))}
-
-                <button onClick={addAction}
-                  className="px-4 py-2 rounded-xl text-sm font-semibold mb-6 transition-all hover:opacity-80"
+              {/* ADMIN PANEL */}
+              {isAdmin && (
+                <div className="rounded-2xl p-6 mb-8 shadow-sm card-hover"
                   style={{
-                    backgroundColor: 'rgba(15,76,92,0.1)',
-                    border: '1px solid rgba(15,76,92,0.2)',
-                    color: '#0f4c5c',
+                    backgroundColor: 'rgba(255,255,255,0.55)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    border: '1px solid rgba(255,255,255,0.8)',
+                    borderLeft: `4px solid ${GOLD}`,
                   }}>
-                  + Add Another Action
-                </button>
-
-                <div>
-                <button onClick={handlePropose} disabled={isLoading || !isDelegated || Number(votingPower) < Number(threshold)}
-                  className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
-                  style={{
-                    backgroundColor: '#5c2d0e',
-                    opacity: (isLoading || !isDelegated || Number(votingPower) < Number(threshold)) ? 0.6 : 1,
-                    cursor: (isLoading || !isDelegated || Number(votingPower) < Number(threshold)) ? 'not-allowed' : 'pointer',
-                  }}>
-                  Submit Proposal
-                </button>
-                {!isDelegated && (
-                  <p className="text-xs mt-2" style={{ color: '#f97316' }}>
-                    ⚠️ You must activate voting power before creating a proposal.
-                  </p>
-                )}
-                {isDelegated && Number(votingPower) < Number(threshold) && (
-                  <p className="text-xs mt-2" style={{ color: '#f97316' }}>
-                    ⚠️ You need at least {threshold} STK voting power to create a proposal. You currently have {formatTokens(votingPower)} STK.
-                  </p>
-                )}
-                </div>
-              </div>
-
-              {/* PROPOSALS LIST */}
-              <div className="rounded-2xl p-6 mb-8 shadow-sm card-hover"
-                style={{
-                  backgroundColor: 'rgba(255,255,255,0.55)',
-                  backdropFilter: 'blur(12px)',
-                  WebkitBackdropFilter: 'blur(12px)',
-                  border: '1px solid rgba(255,255,255,0.8)',
-                  borderLeft: '4px solid #5c2d0e',
-                }}>
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-lg font-bold" style={{ color: '#0f4c5c' }}>
-                    Proposals {proposals.length > 0 && <span style={{ color: '#64748b', fontSize: '0.9rem' }}>({proposals.length})</span>}
-                  </h2>
-                  <div className="flex gap-2">
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-lg font-bold" style={{ color: '#0f4c5c' }}>Admin Panel</h2>
                     <button
-                      onClick={() => setProposalFilter('active')}
-                      className="text-xs font-semibold px-3 py-1 rounded-lg transition-all"
-                      style={{
-                        backgroundColor: proposalFilter === 'active' ? '#5c2d0e' : 'rgba(15,76,92,0.1)',
-                        color: proposalFilter === 'active' ? '#fff' : '#0f4c5c',
-                        border: '1px solid rgba(15,76,92,0.2)',
-                        cursor: 'pointer',
-                      }}>
-                      Active
-                    </button>
-                    <button
-                      onClick={() => setProposalFilter('all')}
-                      className="text-xs font-semibold px-3 py-1 rounded-lg transition-all"
-                      style={{
-                        backgroundColor: proposalFilter === 'all' ? '#5c2d0e' : 'rgba(15,76,92,0.1)',
-                        color: proposalFilter === 'all' ? '#fff' : '#0f4c5c',
-                        border: '1px solid rgba(15,76,92,0.2)',
-                        cursor: 'pointer',
-                      }}>
-                      All
+                      onClick={() => setShowAdminPanel(prev => !prev)}
+                      className="text-xs font-semibold transition-all hover:opacity-80"
+                      style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                      {showAdminPanel ? '▲ Hide' : '▼ Show'}
                     </button>
                   </div>
-                </div>
 
-                {proposals.length === 0 ? (
-                  <p className="text-sm" style={{ color: '#64748b' }}>
-                    No proposals yet. Create the first one above.
-                  </p>
-                ) : (
-                  <div>
-                    {proposals
-                      .filter(p => proposalFilter === 'all' || ['Pending', 'Active', 'Succeeded', 'Queued'].includes(p.stateLabel))
-                      .map((proposal) => {
-                      const totalVotes = Number(proposal.forVotes) + Number(proposal.againstVotes) + Number(proposal.abstainVotes);
-                      const quorumMet = totalVotes >= Number(quorumFraction) / 100 * Number(tokenBalance);
+                  {showAdminPanel && (
+                    <div>
 
-                      return (
-                        <div key={proposal.id.toString()} className="rounded-xl p-5 mb-4"
-                          style={{
-                            backgroundColor: 'rgba(255,255,255,0.6)',
-                            border: '1px solid rgba(15,76,92,0.15)',
-                          }}>
+                      {/* PHASE */}
+                      <div className="mb-6 p-4 rounded-xl"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
+                        <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Phase Control</p>
+                        <p className="text-sm mb-3" style={{ color: '#64748b' }}>
+                          Current phase: <strong style={{ color: PHASE_COLORS[phaseLabel] }}>{phaseLabel}</strong>
+                          {currentPhase < 2 && ` — clicking advance will move to ${PHASE_LABELS[currentPhase + 1]}`}
+                          {currentPhase === 2 && ' — already at final phase'}
+                        </p>
+                        <div className="flex gap-3">
+                          <button onClick={handleAdvancePhase} disabled={isLoading || currentPhase >= 2}
+                            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                            style={{
+                              backgroundColor: GOLD,
+                              opacity: (isLoading || currentPhase >= 2) ? 0.6 : 1,
+                              cursor: (isLoading || currentPhase >= 2) ? 'not-allowed' : 'pointer',
+                            }}>
+                            Advance Phase
+                          </button>
+                          <button onClick={handlePause} disabled={isLoading}
+                            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                            style={{
+                              backgroundColor: '#dc2626',
+                              opacity: isLoading ? 0.6 : 1,
+                              cursor: isLoading ? 'not-allowed' : 'pointer',
+                            }}>
+                            Pause
+                          </button>
+                          <button onClick={handleUnpause} disabled={isLoading}
+                            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                            style={{
+                              backgroundColor: '#16a34a',
+                              opacity: isLoading ? 0.6 : 1,
+                              cursor: isLoading ? 'not-allowed' : 'pointer',
+                            }}>
+                            Unpause
+                          </button>
+                        </div>
+                      </div>
 
-                          {/* HEADER */}
-                          <div className="flex justify-between items-start mb-2">
-                            <p className="text-sm font-bold" style={{ color: '#0f4c5c' }}>
-                              {proposal.description}
-                            </p>
-                            <span className="text-xs font-bold px-3 py-1 rounded-full ml-4"
-                              style={{
-                                backgroundColor: STATE_COLORS[proposal.stateLabel] + '20',
-                                color: STATE_COLORS[proposal.stateLabel],
-                                border: `1px solid ${STATE_COLORS[proposal.stateLabel]}40`,
-                                whiteSpace: 'nowrap',
-                              }}>
-                              {proposal.stateLabel}
-                            </span>
-                          </div>
-
-                          {/* ID + SNAPSHOT */}
-                          <p className="text-xs font-mono mb-1" style={{ color: '#94a3b8' }}>
-                            ID: {proposal.id.toString().slice(0, 10)}...
-                          </p>
-                          <p className="text-xs mb-3" style={{ color: '#94a3b8' }}>
-                            Snapshot block: {proposal.snapshot} — Voting ends block: {proposal.deadline}
-                          </p>
-
-                          {/* ACTION SUMMARY */}
-                          {proposal.targets && proposal.targets.length > 0 && (
-                            <div className="mb-3 p-3 rounded-lg" style={{ backgroundColor: 'rgba(15,76,92,0.05)', border: '1px solid rgba(15,76,92,0.1)' }}>
-                              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: '#64748b' }}>
-                                Actions ({proposal.targets.length})
-                              </p>
-                              {proposal.targets.map((target, i) => (
-                                <div key={i} className="flex items-center gap-2 mb-1">
-                                  <span className="text-xs font-bold px-2 py-0.5 rounded"
-                                    style={{ backgroundColor: '#5c2d0e20', color: '#5c2d0e' }}>
-                                    {i + 1}
-                                  </span>
-                                  <p className="text-xs font-mono" style={{ color: '#64748b' }}>
-                                    Contract: {target.slice(0, 6)}...{target.slice(-4)}
-                                  </p>
-                                  {target.toLowerCase() === TOKEN_ADDRESS.toLowerCase() && (
-                                    <span className="text-xs px-2 py-0.5 rounded"
-                                      style={{ backgroundColor: '#1a4a8a20', color: '#1a4a8a' }}>
-                                      Token Contract
-                                    </span>
-                                  )}
-                                  {target.toLowerCase() === TIMELOCK_ADDRESS.toLowerCase() && (
-                                    <span className="text-xs px-2 py-0.5 rounded"
-                                      style={{ backgroundColor: '#8b5cf620', color: '#8b5cf6' }}>
-                                      Timelock
-                                    </span>
-                                  )}
-                                  {target.toLowerCase() === GOVERNANCE_ADDRESS.toLowerCase() && (
-                                    <span className="text-xs px-2 py-0.5 rounded"
-                                      style={{ backgroundColor: '#f9731620', color: '#f97316' }}>
-                                      Governance
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* QUORUM STATUS */}
-                          <p className="text-xs mb-3 font-semibold"
-                            style={{ color: quorumMet ? '#16a34a' : '#f97316' }}>
-                            {quorumMet ? '✅ Quorum reached' : `⚠️ Quorum not yet reached — need ${quorumFraction}% participation`}
-                          </p>
-
-                          {/* VOTE BAR */}
-                          <VoteBar
-                            forVotes={proposal.forVotes}
-                            againstVotes={proposal.againstVotes}
-                            abstainVotes={proposal.abstainVotes}
-                          />
-
-                          {/* VOTE COUNTS */}
-                          <div className="grid grid-cols-3 gap-3 mb-4">
-                            <div className="rounded-lg p-2 text-center"
-                              style={{ backgroundColor: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)' }}>
-                              <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#16a34a' }}>For</p>
-                              <p className="text-sm font-bold" style={{ color: '#16a34a' }}>{formatTokens(proposal.forVotes)}</p>
-                            </div>
-                            <div className="rounded-lg p-2 text-center"
-                              style={{ backgroundColor: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.2)' }}>
-                              <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#dc2626' }}>Against</p>
-                              <p className="text-sm font-bold" style={{ color: '#dc2626' }}>{formatTokens(proposal.againstVotes)}</p>
-                            </div>
-                            <div className="rounded-lg p-2 text-center"
-                              style={{ backgroundColor: 'rgba(100,116,139,0.1)', border: '1px solid rgba(100,116,139,0.2)' }}>
-                              <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Abstain</p>
-                              <p className="text-sm font-bold" style={{ color: '#64748b' }}>{formatTokens(proposal.abstainVotes)}</p>
-                            </div>
-                          </div>
-
-                          {/* VOTING BUTTONS */}
-                          {proposal.stateLabel === 'Active' && !proposal.hasVoted && (
-                            <div>
-                              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: '#64748b' }}>Cast Your Vote</p>
-                              <input type="text"
-                                placeholder="Optional: add a reason for your vote..."
-                                value={voteReasons[proposal.id.toString()] || ''}
-                                onChange={(e) => setVoteReasons(prev => ({
-                                  ...prev,
-                                  [proposal.id.toString()]: e.target.value
-                                }))}
-                                className="w-full border rounded-xl px-4 py-2 text-sm outline-none mb-3"
+                      {/* UPDATE PRICES */}
+                      <div className="mb-6 p-4 rounded-xl"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
+                        <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Update Prices</p>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Public Mint Price (ETH)</p>
+                            <div className="flex gap-2">
+                              <input type="text" placeholder="e.g. 0.05"
+                                value={newMintPrice}
+                                onChange={(e) => setNewMintPrice(e.target.value)}
+                                className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
                                 style={{ borderColor: '#bae6fd', color: '#334155' }} />
-                              <div className="flex gap-3">
-                                <button onClick={() => handleVote(proposal.id, 1)} disabled={isLoading}
-                                  className="flex-1 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                                  style={{ backgroundColor: '#16a34a', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
-                                  ✓ For
-                                </button>
-                                <button onClick={() => handleVote(proposal.id, 0)} disabled={isLoading}
-                                  className="flex-1 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                                  style={{ backgroundColor: '#dc2626', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
-                                  ✗ Against
-                                </button>
-                                <button onClick={() => handleVote(proposal.id, 2)} disabled={isLoading}
-                                  className="flex-1 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                                  style={{ backgroundColor: '#64748b', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
-                                  — Abstain
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {proposal.stateLabel === 'Active' && proposal.hasVoted && (
-                            <p className="text-xs font-semibold" style={{ color: '#22c55e' }}>
-                              ✅ You have already voted on this proposal
-                            </p>
-                          )}
-
-                          {/* CANCEL BUTTON — only for Pending proposals */}
-                          {proposal.stateLabel === 'Pending' && (
-                            <button onClick={() => handleCancel(proposal)} disabled={isLoading}
-                              className="w-full py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover mt-2"
-                              style={{ backgroundColor: '#dc2626', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
-                              Cancel Proposal
-                            </button>
-                          )}
-
-                          {/* QUEUE BUTTON */}
-                          {proposal.stateLabel === 'Succeeded' && (
-                            <button onClick={() => handleQueue(proposal)} disabled={isLoading}
-                              className="w-full py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover mt-2"
-                              style={{ backgroundColor: '#1a4a8a', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
-                              Queue in Timelock
-                            </button>
-                          )}
-
-                          {/* EXECUTE BUTTON */}
-                          {proposal.stateLabel === 'Queued' && (
-                            <div className="mt-2">
-                              <p className="text-xs mb-2" style={{ color: '#64748b' }}>
-                              This proposal has passed. After the 2 day timelock period you may execute to finalize on-chain.
-                              </p>
-                              <button onClick={() => handleExecute(proposal)} disabled={isLoading}
-                                className="w-full py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                                style={{ backgroundColor: '#0f2d5e', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
-                                Execute Proposal
+                              <button onClick={handleSetMintPrice} disabled={isLoading}
+                                className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                                style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
+                                Update
                               </button>
                             </div>
-                          )}
-
-                          {proposal.stateLabel === 'Executed' && (
-                            <p className="text-xs font-semibold mt-2" style={{ color: '#0f4c5c' }}>
-                              ✅ This proposal has been executed on-chain
-                            </p>
-                          )}
-
-                          {proposal.stateLabel === 'Defeated' && (
-                            <p className="text-xs font-semibold mt-2" style={{ color: '#dc2626' }}>
-                              ✗ This proposal was defeated — quorum not reached or against votes won
-                            </p>
-                          )}
-
-                          {proposal.stateLabel === 'Canceled' && (
-                            <p className="text-xs font-semibold mt-2" style={{ color: '#94a3b8' }}>
-                              ✗ This proposal was canceled
-                            </p>
-                          )}
-
-                          {proposal.stateLabel === 'Expired' && (
-                            <p className="text-xs font-semibold mt-2" style={{ color: '#94a3b8' }}>
-                              ✗ This proposal expired before execution
-                            </p>
-                          )}
-
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Whitelist Price (ETH)</p>
+                            <div className="flex gap-2">
+                              <input type="text" placeholder="e.g. 0.03"
+                                value={newWhitelistPrice}
+                                onChange={(e) => setNewWhitelistPrice(e.target.value)}
+                                className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
+                                style={{ borderColor: '#bae6fd', color: '#334155' }} />
+                              <button onClick={handleSetWhitelistPrice} disabled={isLoading}
+                                className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                                style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
+                                Update
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                      </div>
+
+                      {/* UPDATE MERKLE ROOT */}
+                      <div className="mb-6 p-4 rounded-xl"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
+                        <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Update Merkle Root</p>
+                        <p className="text-xs mb-3" style={{ color: '#94a3b8' }}>
+                          Current whitelist root: <span className="font-mono">{getMerkleRoot()}</span>
+                        </p>
+                        <div className="flex gap-2">
+                          <input type="text" placeholder="0x... new merkle root"
+                            value={newMerkleRoot}
+                            onChange={(e) => setNewMerkleRoot(e.target.value)}
+                            className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
+                            style={{ borderColor: '#bae6fd', color: '#334155' }} />
+                          <button onClick={handleSetMerkleRoot} disabled={isLoading}
+                            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                            style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
+                            Update
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* UPDATE BASE URI */}
+                      <div className="mb-6 p-4 rounded-xl"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
+                        <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Update Base URI</p>
+                        <div className="flex gap-2">
+                          <input type="text" placeholder="ipfs://YOUR_NEW_CID/"
+                            value={newBaseURI}
+                            onChange={(e) => setNewBaseURI(e.target.value)}
+                            className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
+                            style={{ borderColor: '#bae6fd', color: '#334155' }} />
+                          <button onClick={handleSetBaseURI} disabled={isLoading}
+                            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                            style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
+                            Update
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* WITHDRAW */}
+                      <div className="mb-6 p-4 rounded-xl"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
+                        <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Withdraw ETH</p>
+                        <p className="text-sm mb-3" style={{ color: '#0f4c5c' }}>
+                          Contract Balance: <strong>{contractBalance} ETH</strong>
+                        </p>
+                        <div className="flex gap-2">
+                          <input type="text" placeholder="0x... recipient address"
+                            value={withdrawAddress}
+                            onChange={(e) => setWithdrawAddress(e.target.value)}
+                            className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
+                            style={{ borderColor: '#bae6fd', color: '#334155' }} />
+                          <button onClick={handleWithdraw} disabled={isLoading}
+                            className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                            style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
+                            Withdraw
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* RECOVER ERC20 */}
+                      <div className="p-4 rounded-xl"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
+                        <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Recover ERC-20 Tokens</p>
+                        <div className="grid grid-cols-3 gap-3 mb-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Token Address</p>
+                            <input type="text" placeholder="0x... token contract"
+                              value={recoverToken}
+                              onChange={(e) => setRecoverToken(e.target.value)}
+                              className="w-full border rounded-xl px-4 py-2 text-sm outline-none"
+                              style={{ borderColor: '#bae6fd', color: '#334155' }} />
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Recipient Address</p>
+                            <input type="text" placeholder="0x... recipient"
+                              value={recoverTo}
+                              onChange={(e) => setRecoverTo(e.target.value)}
+                              className="w-full border rounded-xl px-4 py-2 text-sm outline-none"
+                              style={{ borderColor: '#bae6fd', color: '#334155' }} />
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Amount</p>
+                            <input type="text" placeholder="e.g. 100"
+                              value={recoverAmount}
+                              onChange={(e) => setRecoverAmount(e.target.value)}
+                              className="w-full border rounded-xl px-4 py-2 text-sm outline-none"
+                              style={{ borderColor: '#bae6fd', color: '#334155' }} />
+                          </div>
+                        </div>
+                        <button onClick={handleRecoverERC20} disabled={isLoading}
+                          className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
+                          style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
+                          Recover Tokens
+                        </button>
+                      </div>
+
+                    </div>
+                  )}
+                </div>
+              )}
+
             </>
           )}
         </div>

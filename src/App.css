@@ -12,17 +12,17 @@ body {
     background: linear-gradient(
         135deg,
         #e8e8e8 0%,
-        #dde4ea 15%,
-        #d0d8e4 25%,
-        #b8c8d8 35%,
-        #9ab4cc 43%,
-        #7a9ec0 50%,
-        #5a88b4 57%,
-        #3a6aa0 65%,
-        #2a5590 73%,
-        #1a4a8a 80%,
-        #122070 90%,
-        #0f2d5e 100%
+        #e4dada 15%,
+        #e0cccc 25%,
+        #d4b0b0 35%,
+        #c49090 43%,
+        #b47070 50%,
+        #a05050 57%,
+        #8a3030 65%,
+        #741818 73%,
+        #640a0a 80%,
+        #4a0404 90%,
+        #3b0000 100%
     );
     background-size: 100% 100%;
 }
@@ -88,7 +88,7 @@ body {
 
 .card-hover:hover {
     transform: translateY(-4px);
-    box-shadow: 0 12px 30px rgba(15, 45, 94, 0.2);
+    box-shadow: 0 12px 30px rgba(59, 0, 0, 0.2);
 }
 
 .btn-hover {
