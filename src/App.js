@@ -6,14 +6,16 @@ import keccak256 from 'keccak256';
 import './App.css';
 import NftMembershipABI from './contracts/NftMembership.json';
 import sepoliaDeployment from './contracts/sepolia.json';
+import localhostDeployment from './contracts/localhost.json';
 import whitelist from './whitelist.json';
 
 window.Buffer = Buffer;
 
-const NFT_ADDRESS = sepoliaDeployment.NftMembership;
+const ADDRESSES = {
+  '0xaa36a7': sepoliaDeployment.NftMembership,
+  '0x7a69':   localhostDeployment.NftMembership,
+};
 const NFT_ABI = NftMembershipABI.abi;
-
-// Dark gold for buttons and accents
 const GOLD = '#9a6f00';
 
 const STATUS_COLORS = {
@@ -47,7 +49,6 @@ function getMerkleRoot() {
   return tree.getHexRoot();
 }
 
-
 const parseError = (err) => {
   if (err.message.includes('user rejected'))              return 'Transaction rejected in MetaMask.';
   if (err.message.includes('insufficient funds'))         return 'Insufficient funds for this transaction.';
@@ -79,10 +80,13 @@ function Spinner() {
 }
 
 function App() {
-  const [nftContract,     setNftContract]     = useState(null);
-  const [readNft,         setReadNft]         = useState(null);
-  const [account,         setAccount]         = useState(null);
-  const [provider,        setProvider]        = useState(null);
+  // Wallet / connection
+  const [nftContract,  setNftContract]  = useState(null);
+  const [readNft,      setReadNft]      = useState(null);
+  const [account,      setAccount]      = useState(null);
+  const [provider,     setProvider]     = useState(null);
+  const [chainId,      setChainId]      = useState(null);
+  const [nftAddress,   setNftAddress]   = useState(null);
 
   // Contract data
   const [currentPhase,     setCurrentPhase]     = useState(0);
@@ -94,6 +98,8 @@ function App() {
   const [userTokenIds,     setUserTokenIds]     = useState([]);
   const [whitelistClaimed, setWhitelistClaimed] = useState(false);
   const [contractBalance,  setContractBalance]  = useState('0');
+  const [isPaused,         setIsPaused]         = useState(false);
+  const [isAdmin,          setIsAdmin]          = useState(false);
 
   // Admin inputs
   const [newMintPrice,      setNewMintPrice]      = useState('');
@@ -104,7 +110,6 @@ function App() {
   const [recoverToken,      setRecoverToken]      = useState('');
   const [recoverTo,         setRecoverTo]         = useState('');
   const [recoverAmount,     setRecoverAmount]     = useState('');
-  const [isAdmin,           setIsAdmin]           = useState(false);
   const [showAdminPanel,    setShowAdminPanel]    = useState(false);
 
   // Status
@@ -112,7 +117,58 @@ function App() {
   const [statusStyle, setStatusStyle] = useState(STATUS_COLORS.default);
   const [isLoading,   setIsLoading]   = useState(false);
   const [txHash,      setTxHash]      = useState('');
-  const [isPaused,    setIsPaused]    = useState(false);
+
+  // ─────────────────────────────────────────
+  // loadDashboardData
+  // ─────────────────────────────────────────
+
+  const loadDashboardData = async (_readNft, _account, _provider, _nftAddress) => {
+    try {
+      const _phase           = await _readNft.currentPhase();
+      const _totalMinted     = await _readNft.totalMinted();
+      const _maxSupply       = await _readNft.maxSupply();
+      const _mintPrice       = await _readNft.mintPrice();
+      const _whitelistPrice  = await _readNft.whitelistMintPrice();
+      const _merkleRoot      = await _readNft.merkleRoot();
+      const _claimed         = await _readNft.whitelistClaimed(_account);
+      const _contractBalance = await _provider.getBalance(_nftAddress);
+      const _isPaused        = await _readNft.paused();
+      const ADMIN_ROLE       = await _readNft.ADMIN_ROLE();
+      const _isAdmin         = await _readNft.hasRole(ADMIN_ROLE, _account);
+
+      setCurrentPhase(_phase);
+      setTotalMinted(_totalMinted.toString());
+      setMaxSupply(_maxSupply.toString());
+      setMintPrice(ethers.utils.formatEther(_mintPrice));
+      setWhitelistPrice(ethers.utils.formatEther(_whitelistPrice));
+      setMerkleRoot(_merkleRoot);
+      setWhitelistClaimed(_claimed);
+      setContractBalance(ethers.utils.formatEther(_contractBalance));
+      setIsPaused(_isPaused);
+      setIsAdmin(_isAdmin);
+
+      try {
+        const filterTo   = _readNft.filters.Transfer(null, _account);
+        const filterFrom = _readNft.filters.Transfer(_account, null);
+        const toEvents   = await _readNft.queryFilter(filterTo);
+        const fromEvents = await _readNft.queryFilter(filterFrom);
+        const received   = new Set(toEvents.map(e => e.args.tokenId.toString()));
+        const sent       = new Set(fromEvents.map(e => e.args.tokenId.toString()));
+        const owned      = [...received].filter(id => !sent.has(id));
+        setUserTokenIds(owned);
+      } catch {
+        setUserTokenIds([]);
+      }
+
+    } catch (err) {
+      setStatus('Error loading data: ' + err.message);
+      setStatusStyle(STATUS_COLORS.error);
+    }
+  };
+
+  // ─────────────────────────────────────────
+  // connectWallet
+  // ─────────────────────────────────────────
 
   const connectWallet = async () => {
     try {
@@ -122,9 +178,17 @@ function App() {
         return;
       }
 
-      const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (chainId !== '0xaa36a7' && chainId !== '0x7a69') {
+      const _chainId = await window.ethereum.request({ method: 'eth_chainId' });
+
+      if (_chainId !== '0xaa36a7' && _chainId !== '0x7a69') {
         setStatus('Please switch MetaMask to Sepolia or Localhost 8545.');
+        setStatusStyle(STATUS_COLORS.error);
+        return;
+      }
+
+      const _nftAddress = ADDRESSES[_chainId];
+      if (!_nftAddress) {
+        setStatus('No deployment found for this network.');
         setStatusStyle(STATUS_COLORS.error);
         return;
       }
@@ -132,10 +196,10 @@ function App() {
       await window.ethereum.request({ method: 'eth_requestAccounts' });
 
       const metaMaskProvider = new ethers.providers.Web3Provider(window.ethereum);
-      const _signer  = metaMaskProvider.getSigner();
-      const _account = await _signer.getAddress();
+      const _signer          = metaMaskProvider.getSigner();
+      const _account         = await _signer.getAddress();
 
-      const isLocalhost = chainId === '0x7a69';
+      const isLocalhost = _chainId === '0x7a69';
       const rpcProvider = isLocalhost
         ? new ethers.providers.JsonRpcProvider('http://127.0.0.1:8545')
         : new ethers.providers.JsonRpcProvider(
@@ -143,20 +207,27 @@ function App() {
             { name: 'sepolia', chainId: 11155111 }
           );
 
-      const _nftContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, _signer);
-      const _readNft     = new ethers.Contract(NFT_ADDRESS, NFT_ABI, rpcProvider);
+      const _nftContract = new ethers.Contract(_nftAddress, NFT_ABI, _signer);
+      const _readNft     = new ethers.Contract(_nftAddress, NFT_ABI, rpcProvider);
 
       setNftContract(_nftContract);
       setReadNft(_readNft);
       setAccount(_account);
       setProvider(rpcProvider);
+      setChainId(_chainId);
+      setNftAddress(_nftAddress);
 
-      await loadDashboardData(_readNft, _account, rpcProvider);
+      await loadDashboardData(_readNft, _account, rpcProvider, _nftAddress);
+
     } catch (err) {
       setStatus('Error connecting wallet: ' + err.message);
       setStatusStyle(STATUS_COLORS.error);
     }
   };
+
+  // ─────────────────────────────────────────
+  // Account change listener
+  // ─────────────────────────────────────────
 
   useEffect(() => {
     if (!window.ethereum) return;
@@ -168,6 +239,8 @@ function App() {
         setNftContract(null);
         setReadNft(null);
         setProvider(null);
+        setChainId(null);
+        setNftAddress(null);
         setCurrentPhase(0);
         setTotalMinted('0');
         setMaxSupply('0');
@@ -188,57 +261,15 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadDashboardData = async (_readNft, _account, _provider) => {
-    try {
-      const _phase           = await _readNft.currentPhase();
-      const _totalMinted     = await _readNft.totalMinted();
-      const _maxSupply       = await _readNft.maxSupply();
-      const _mintPrice       = await _readNft.mintPrice();
-      const _whitelistPrice  = await _readNft.whitelistMintPrice();
-      const _merkleRoot      = await _readNft.merkleRoot();
-      const _claimed         = await _readNft.whitelistClaimed(_account);
-      const _contractBalance = await _provider.getBalance(NFT_ADDRESS);
-      const _isPaused        = await _readNft.paused();
-
-      setCurrentPhase(_phase);
-      setTotalMinted(_totalMinted.toString());
-      setMaxSupply(_maxSupply.toString());
-      setMintPrice(ethers.utils.formatEther(_mintPrice));
-      setWhitelistPrice(ethers.utils.formatEther(_whitelistPrice));
-      setMerkleRoot(_merkleRoot);
-      setWhitelistClaimed(_claimed);
-      setContractBalance(ethers.utils.formatEther(_contractBalance));
-      setIsPaused(_isPaused);
-
-      const ADMIN_ROLE = await _readNft.ADMIN_ROLE();
-      const _isAdmin = await _readNft.hasRole(ADMIN_ROLE, _account);
-      setIsAdmin(_isAdmin);
-
-      try {
-        const filterTo   = _readNft.filters.Transfer(null, _account);
-        const filterFrom = _readNft.filters.Transfer(_account, null);
-        const toEvents   = await _readNft.queryFilter(filterTo);
-        const fromEvents = await _readNft.queryFilter(filterFrom);
-
-        const received = new Set(toEvents.map(e => e.args.tokenId.toString()));
-        const sent     = new Set(fromEvents.map(e => e.args.tokenId.toString()));
-        const owned    = [...received].filter(id => !sent.has(id));
-        setUserTokenIds(owned);
-      } catch {
-        setUserTokenIds([]);
-      }
-
-    } catch (err) {
-      setStatus('Error loading data: ' + err.message);
-      setStatusStyle(STATUS_COLORS.error);
-    }
-  };
+  // ─────────────────────────────────────────
+  // Refresh
+  // ─────────────────────────────────────────
 
   const handleRefresh = async () => {
-    if (!readNft || !account) return;
+    if (!readNft || !account || !nftAddress) return;
     setStatus('Refreshing...');
     setStatusStyle(STATUS_COLORS.default);
-    await loadDashboardData(readNft, account, provider);
+    await loadDashboardData(readNft, account, provider, nftAddress);
     setStatus('');
   };
 
@@ -266,7 +297,7 @@ function App() {
       setTxHash(tx.hash);
       setStatus('Whitelist pass minted successfully!');
       setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -289,7 +320,7 @@ function App() {
       setTxHash(tx.hash);
       setStatus('Membership pass minted successfully!');
       setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -314,7 +345,7 @@ function App() {
       setTxHash(tx.hash);
       setStatus('Phase advanced successfully!');
       setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -335,7 +366,7 @@ function App() {
       setTxHash(tx.hash);
       setStatus('Contract paused.');
       setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -356,7 +387,7 @@ function App() {
       setTxHash(tx.hash);
       setStatus('Contract unpaused.');
       setStatusStyle(STATUS_COLORS.success);
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -379,7 +410,7 @@ function App() {
       setStatus('Mint price updated!');
       setStatusStyle(STATUS_COLORS.success);
       setNewMintPrice('');
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -402,7 +433,7 @@ function App() {
       setStatus('Whitelist price updated!');
       setStatusStyle(STATUS_COLORS.success);
       setNewWhitelistPrice('');
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -425,7 +456,7 @@ function App() {
       setStatus('Merkle root updated!');
       setStatusStyle(STATUS_COLORS.success);
       setNewMerkleRoot('');
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -448,7 +479,7 @@ function App() {
       setStatus('Base URI updated!');
       setStatusStyle(STATUS_COLORS.success);
       setNewBaseURI('');
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -475,7 +506,7 @@ function App() {
       setStatus('ETH withdrawn successfully!');
       setStatusStyle(STATUS_COLORS.success);
       setWithdrawAddress('');
-      await loadDashboardData(readNft, account, provider);
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -508,6 +539,7 @@ function App() {
       setRecoverToken('');
       setRecoverTo('');
       setRecoverAmount('');
+      await loadDashboardData(readNft, account, provider, nftAddress);
     } catch (err) {
       setIsLoading(false);
       setTxHash('');
@@ -516,10 +548,18 @@ function App() {
     }
   };
 
-  const phaseLabel = PHASE_LABELS[currentPhase] || 'Unknown';
-  const supplyPct  = maxSupply > 0 ? ((Number(totalMinted) / Number(maxSupply)) * 100).toFixed(1) : '0';
+  // ─────────────────────────────────────────
+  // Derived values
+  // ─────────────────────────────────────────
+
+  const phaseLabel    = PHASE_LABELS[currentPhase] || 'Unknown';
+  const supplyPct     = maxSupply > 0 ? ((Number(totalMinted) / Number(maxSupply)) * 100).toFixed(1) : '0';
   const isWhitelisted = getMerkleProof(account).length > 0;
-  const isSoldOut = Number(totalMinted) >= Number(maxSupply);
+  const isSoldOut     = Number(totalMinted) >= Number(maxSupply);
+
+  // ─────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────
 
   return (
     <div>
@@ -571,7 +611,7 @@ function App() {
               style={statusStyle}>
               {isLoading && <Spinner />}
               <span>{status}</span>
-              {txHash && !isLoading && (
+              {txHash && !isLoading && chainId === '0xaa36a7' && (
                 <a href={`https://sepolia.etherscan.io/tx/${txHash}`}
                   target="_blank" rel="noopener noreferrer"
                   style={{ color: '#fff', textDecoration: 'underline', marginLeft: '8px', fontWeight: 'bold' }}>
@@ -676,47 +716,33 @@ function App() {
                       <>
                         {isWhitelisted ? (
                           <>
-                            <p className="text-xs mb-4" style={{ color: '#22c55e' }}>
-                              ✅ Your wallet is on the whitelist.
-                            </p>
+                            <p className="text-xs mb-4" style={{ color: '#22c55e' }}>✅ Your wallet is on the whitelist.</p>
                             {isSoldOut ? (
                               <div>
-                                <button disabled
-                                  className="px-6 py-3 rounded-xl font-semibold text-white"
+                                <button disabled className="px-6 py-3 rounded-xl font-semibold text-white"
                                   style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
                                   Sold Out
                                 </button>
-                                <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
-                                  ⚠️ All membership passes have been minted.
-                                </p>
+                                <p className="text-xs mt-2" style={{ color: '#dc2626' }}>⚠️ All membership passes have been minted.</p>
                               </div>
                             ) : isPaused ? (
                               <div>
-                                <button disabled
-                                  className="px-6 py-3 rounded-xl font-semibold text-white"
+                                <button disabled className="px-6 py-3 rounded-xl font-semibold text-white"
                                   style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
                                   Mint Whitelist Pass — {whitelistPrice} ETH
                                 </button>
-                                <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
-                                  ⚠️ Minting is currently paused.
-                                </p>
+                                <p className="text-xs mt-2" style={{ color: '#dc2626' }}>⚠️ Minting is currently paused.</p>
                               </div>
                             ) : (
                               <button onClick={handleWhitelistMint} disabled={isLoading}
                                 className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
-                                style={{
-                                  backgroundColor: GOLD,
-                                  opacity: isLoading ? 0.6 : 1,
-                                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                                }}>
+                                style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
                                 Mint Whitelist Pass — {whitelistPrice} ETH
                               </button>
                             )}
                           </>
                         ) : (
-                          <p className="text-sm" style={{ color: '#dc2626' }}>
-                            ✗ Your wallet is not on the whitelist.
-                          </p>
+                          <p className="text-sm" style={{ color: '#dc2626' }}>✗ Your wallet is not on the whitelist.</p>
                         )}
                       </>
                     )}
@@ -730,34 +756,24 @@ function App() {
                     </p>
                     {isSoldOut ? (
                       <div>
-                        <button disabled
-                          className="px-6 py-3 rounded-xl font-semibold text-white"
+                        <button disabled className="px-6 py-3 rounded-xl font-semibold text-white"
                           style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
                           Sold Out
                         </button>
-                        <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
-                          ⚠️ All membership passes have been minted.
-                        </p>
+                        <p className="text-xs mt-2" style={{ color: '#dc2626' }}>⚠️ All membership passes have been minted.</p>
                       </div>
                     ) : isPaused ? (
                       <div>
-                        <button disabled
-                          className="px-6 py-3 rounded-xl font-semibold text-white"
+                        <button disabled className="px-6 py-3 rounded-xl font-semibold text-white"
                           style={{ backgroundColor: GOLD, opacity: 0.4, cursor: 'not-allowed' }}>
                           Mint Pass — {mintPrice} ETH
                         </button>
-                        <p className="text-xs mt-2" style={{ color: '#dc2626' }}>
-                          ⚠️ Minting is currently paused.
-                        </p>
+                        <p className="text-xs mt-2" style={{ color: '#dc2626' }}>⚠️ Minting is currently paused.</p>
                       </div>
                     ) : (
                       <button onClick={handlePublicMint} disabled={isLoading}
                         className="px-6 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 btn-hover"
-                        style={{
-                          backgroundColor: GOLD,
-                          opacity: isLoading ? 0.6 : 1,
-                          cursor: isLoading ? 'not-allowed' : 'pointer',
-                        }}>
+                        style={{ backgroundColor: GOLD, opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
                         Mint Pass — {mintPrice} ETH
                       </button>
                     )}
@@ -776,18 +792,12 @@ function App() {
                 }}>
                 <h2 className="text-lg font-bold mb-4" style={{ color: '#0f4c5c' }}>Your Passes</h2>
                 {userTokenIds.length === 0 ? (
-                  <p className="text-sm" style={{ color: '#64748b' }}>
-                    You don't own any membership passes yet.
-                  </p>
+                  <p className="text-sm" style={{ color: '#64748b' }}>You don't own any membership passes yet.</p>
                 ) : (
                   <div className="flex flex-wrap gap-3">
                     {userTokenIds.map((id) => (
                       <div key={id} className="rounded-xl px-4 py-3 text-center"
-                        style={{
-                          backgroundColor: 'rgba(255,255,255,0.7)',
-                          border: `1px solid ${GOLD}40`,
-                          minWidth: '80px',
-                        }}>
+                        style={{ backgroundColor: 'rgba(255,255,255,0.7)', border: `1px solid ${GOLD}40`, minWidth: '80px' }}>
                         <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Pass</p>
                         <p className="text-lg font-bold" style={{ color: GOLD }}>#{id}</p>
                       </div>
@@ -811,7 +821,7 @@ function App() {
                     { label: 'Public Mint Price', value: mintPrice + ' ETH' },
                     { label: 'Whitelist Price',   value: whitelistPrice + ' ETH' },
                     { label: 'Max Supply',        value: maxSupply },
-                    { label: 'Merkle Root',       value: merkleRoot.slice(0, 10) + '...' },
+                    { label: 'Merkle Root',       value: merkleRoot ? merkleRoot.slice(0, 10) + '...' : '—' },
                   ].map((setting) => (
                     <div key={setting.label}>
                       <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>{setting.label}</p>
@@ -833,8 +843,7 @@ function App() {
                   }}>
                   <div className="flex justify-between items-center mb-4">
                     <h2 className="text-lg font-bold" style={{ color: '#0f4c5c' }}>Admin Panel</h2>
-                    <button
-                      onClick={() => setShowAdminPanel(prev => !prev)}
+                    <button onClick={() => setShowAdminPanel(prev => !prev)}
                       className="text-xs font-semibold transition-all hover:opacity-80"
                       style={{ color: '#64748b', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                       {showAdminPanel ? '▲ Hide' : '▼ Show'}
@@ -844,7 +853,7 @@ function App() {
                   {showAdminPanel && (
                     <div>
 
-                      {/* PHASE */}
+                      {/* PHASE CONTROL */}
                       <div className="mb-6 p-4 rounded-xl"
                         style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
                         <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Phase Control</p>
@@ -856,29 +865,17 @@ function App() {
                         <div className="flex gap-3">
                           <button onClick={handleAdvancePhase} disabled={isLoading || currentPhase >= 2}
                             className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                            style={{
-                              backgroundColor: GOLD,
-                              opacity: (isLoading || currentPhase >= 2) ? 0.6 : 1,
-                              cursor: (isLoading || currentPhase >= 2) ? 'not-allowed' : 'pointer',
-                            }}>
+                            style={{ backgroundColor: GOLD, opacity: (isLoading || currentPhase >= 2) ? 0.6 : 1, cursor: (isLoading || currentPhase >= 2) ? 'not-allowed' : 'pointer' }}>
                             Advance Phase
                           </button>
                           <button onClick={handlePause} disabled={isLoading}
                             className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                            style={{
-                              backgroundColor: '#dc2626',
-                              opacity: isLoading ? 0.6 : 1,
-                              cursor: isLoading ? 'not-allowed' : 'pointer',
-                            }}>
+                            style={{ backgroundColor: '#dc2626', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
                             Pause
                           </button>
                           <button onClick={handleUnpause} disabled={isLoading}
                             className="px-4 py-2 rounded-xl font-semibold text-white text-sm transition-all hover:opacity-90 btn-hover"
-                            style={{
-                              backgroundColor: '#16a34a',
-                              opacity: isLoading ? 0.6 : 1,
-                              cursor: isLoading ? 'not-allowed' : 'pointer',
-                            }}>
+                            style={{ backgroundColor: '#16a34a', opacity: isLoading ? 0.6 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}>
                             Unpause
                           </button>
                         </div>
@@ -892,8 +889,7 @@ function App() {
                           <div>
                             <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Public Mint Price (ETH)</p>
                             <div className="flex gap-2">
-                              <input type="text" placeholder="e.g. 0.05"
-                                value={newMintPrice}
+                              <input type="text" placeholder="e.g. 0.05" value={newMintPrice}
                                 onChange={(e) => setNewMintPrice(e.target.value)}
                                 className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
                                 style={{ borderColor: '#bae6fd', color: '#334155' }} />
@@ -907,8 +903,7 @@ function App() {
                           <div>
                             <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Whitelist Price (ETH)</p>
                             <div className="flex gap-2">
-                              <input type="text" placeholder="e.g. 0.03"
-                                value={newWhitelistPrice}
+                              <input type="text" placeholder="e.g. 0.03" value={newWhitelistPrice}
                                 onChange={(e) => setNewWhitelistPrice(e.target.value)}
                                 className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
                                 style={{ borderColor: '#bae6fd', color: '#334155' }} />
@@ -930,8 +925,7 @@ function App() {
                           Current whitelist root: <span className="font-mono">{getMerkleRoot()}</span>
                         </p>
                         <div className="flex gap-2">
-                          <input type="text" placeholder="0x... new merkle root"
-                            value={newMerkleRoot}
+                          <input type="text" placeholder="0x... new merkle root" value={newMerkleRoot}
                             onChange={(e) => setNewMerkleRoot(e.target.value)}
                             className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
                             style={{ borderColor: '#bae6fd', color: '#334155' }} />
@@ -948,8 +942,7 @@ function App() {
                         style={{ backgroundColor: 'rgba(255,255,255,0.6)', border: '1px solid rgba(15,76,92,0.15)' }}>
                         <p className="text-xs uppercase tracking-wide mb-3" style={{ color: '#64748b' }}>Update Base URI</p>
                         <div className="flex gap-2">
-                          <input type="text" placeholder="ipfs://YOUR_NEW_CID/"
-                            value={newBaseURI}
+                          <input type="text" placeholder="ipfs://YOUR_NEW_CID/" value={newBaseURI}
                             onChange={(e) => setNewBaseURI(e.target.value)}
                             className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
                             style={{ borderColor: '#bae6fd', color: '#334155' }} />
@@ -969,8 +962,7 @@ function App() {
                           Contract Balance: <strong>{contractBalance} ETH</strong>
                         </p>
                         <div className="flex gap-2">
-                          <input type="text" placeholder="0x... recipient address"
-                            value={withdrawAddress}
+                          <input type="text" placeholder="0x... recipient address" value={withdrawAddress}
                             onChange={(e) => setWithdrawAddress(e.target.value)}
                             className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
                             style={{ borderColor: '#bae6fd', color: '#334155' }} />
@@ -989,24 +981,21 @@ function App() {
                         <div className="grid grid-cols-3 gap-3 mb-3">
                           <div>
                             <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Token Address</p>
-                            <input type="text" placeholder="0x... token contract"
-                              value={recoverToken}
+                            <input type="text" placeholder="0x... token contract" value={recoverToken}
                               onChange={(e) => setRecoverToken(e.target.value)}
                               className="w-full border rounded-xl px-4 py-2 text-sm outline-none"
                               style={{ borderColor: '#bae6fd', color: '#334155' }} />
                           </div>
                           <div>
                             <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Recipient Address</p>
-                            <input type="text" placeholder="0x... recipient"
-                              value={recoverTo}
+                            <input type="text" placeholder="0x... recipient" value={recoverTo}
                               onChange={(e) => setRecoverTo(e.target.value)}
                               className="w-full border rounded-xl px-4 py-2 text-sm outline-none"
                               style={{ borderColor: '#bae6fd', color: '#334155' }} />
                           </div>
                           <div>
                             <p className="text-xs uppercase tracking-wide mb-1" style={{ color: '#64748b' }}>Amount</p>
-                            <input type="text" placeholder="e.g. 100"
-                              value={recoverAmount}
+                            <input type="text" placeholder="e.g. 100" value={recoverAmount}
                               onChange={(e) => setRecoverAmount(e.target.value)}
                               className="w-full border rounded-xl px-4 py-2 text-sm outline-none"
                               style={{ borderColor: '#bae6fd', color: '#334155' }} />
